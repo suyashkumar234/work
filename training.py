@@ -62,8 +62,9 @@ def main(_run, _config, _log):
     else:
         raise ValueError(f'Dataset: {data_name} not found')
 
-    ### Transforms for data augmentation
+    ###================== Transforms for data augmentation =============================== ###
     tr_transforms = myaug.transform_with_label({'aug': myaug.augs[_config['which_aug']]})
+    ### ================================================================================== ###
     assert _config['scan_per_load'] < 0 # by default we load the entire dataset directly
 
     test_labels = DATASET_INFO[baseset_name]['LABEL_GROUP']['pa_all'] - DATASET_INFO[baseset_name]['LABEL_GROUP'][_config["label_sets"]]
@@ -76,7 +77,7 @@ def main(_run, _config, _log):
         idx_split = _config['eval_fold'],
         mode='train',
         min_fg=str(_config["min_fg_data"]), # dummy entry for superpixel dataset
-        transforms=tr_transforms,
+        transform_params_limits=myaug.augs[_config['which_aug']],
         nsup = _config['task']['n_shots'],
         scan_per_load = _config['scan_per_load'],
         exclude_list = _config["exclude_cls_list"],
