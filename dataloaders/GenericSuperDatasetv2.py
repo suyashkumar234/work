@@ -18,9 +18,12 @@ from dataloaders.common import BaseDataset, Subset
 from dataloaders.dataset_utils import*
 from pdb import set_trace
 from util.utils import CircularList
+import dataloaders.augutils as myaug
+import torchvision.transforms as deftfx
+import dataloaders.image_transforms as myit
 
 class SuperpixelDataset(BaseDataset):
-    def __init__(self, which_dataset, base_dir, idx_split, mode, transforms, scan_per_load, num_rep = 2, min_fg = '', nsup = 1, fix_length = None, tile_z_dim = 3, exclude_list = [], superpix_scale = 'SMALL', **kwargs):
+    def __init__(self, which_dataset, base_dir, idx_split, mode, transform_param_limits, scan_per_load, num_rep = 2, min_fg = '', nsup = 1, fix_length = None, tile_z_dim = 3, exclude_list = [], superpix_scale = 'SMALL', **kwargs):
         """
         Pseudolabel dataset
         Args:
@@ -44,7 +47,7 @@ class SuperpixelDataset(BaseDataset):
         self.pseu_label_name = DATASET_INFO[which_dataset]['PSEU_LABEL_NAME']
         self.real_label_name = DATASET_INFO[which_dataset]['REAL_LABEL_NAME']
 
-        self.transforms = transforms
+        self.transform_param_limits = transform_param_limits
         self.is_train = True if mode == 'train' else False
         assert mode == 'train'
         self.fix_length = fix_length
@@ -87,6 +90,22 @@ class SuperpixelDataset(BaseDataset):
 
         print("###### Initial scans loaded: ######")
         print(self.pid_curr_load)
+
+        print("#### Setting up augmentation population ####")
+        self.affine     = self.transform_param_limits['aug'].get('affine', 0)
+        self.alpha      = self.transform_param_limits['aug'].get('elastic',{'alpha': 0})['alpha']
+        self.sigma      = self.transform_param_limits['aug'].get('elastic',{'sigma': 0})['sigma']
+        self.gamma_range = self.transform_param_limits['aug']['gamma_range']
+
+        self.randomaffine = myit.RandomAffine(self.affine.get('rotate'),
+                                             self.affine.get('shift'),
+                                             self.affine.get('shear'),
+                                             self.affine.get('scale'),
+                                             self.affine.get('scale_iso',True),
+                                             order=3)
+
+        self.elastic = myit.ElasticTransform(self.alpha, self.sigma)
+
 
     def get_scanids(self, mode, idx_split):
         """
@@ -239,9 +258,83 @@ class SuperpixelDataset(BaseDataset):
 
         return np.float32(super_map == bi_val)
 
+    def gamma_transform(self, img)
+        # gamma_range = aug['aug']['gamma_range']
+        if isinstance(self.gamma_range, tuple):
+            gamma = np.random.rand() * (gamma_range[1] - gamma_range[0]) + gamma_range[0]
+            cmin = img.min()
+            irange = (img.max() - cmin + 1e-5)
+
+            img = img - cmin + 1e-5
+            img = irange * np.power(img * 1.0 / irange,  gamma)
+            img = img + cmin
+
+        elif gamma_range == False:
+            pass
+        else:
+            raise ValueError("Cannot identify gamma transform range {}".format(gamma_range))
+        return img, gamma
+
+    def transform_img_lb(self, comp, c_label, c_img, use_onehot, nclass, **kwargs):
+        """
+        Args
+        comp:               a numpy array with shape [H x W x C + c_label]
+        c_label:            number of channels for a compact label. Note that the current version only supports 1 slice (H x W x 1)
+        nc_onehot:          -1 for not using one-hot representation of mask. otherwise, specify number of classes in the label
+
+        """
+        
+
+        params = []
+
+        comp = copy.deepcopy(comp)
+        if (use_onehot is True) and (c_label != 1):
+            raise NotImplementedError("Only allow compact label, also the label can only be 2d")
+        assert c_img + 1 == comp.shape[-1], "only allow single slice 2D label"
+
+        # geometric transform
+        _label = comp[..., c_img ]
+        _h_label = np.float32(np.arange( nclass ) == (_label[..., None]) )
+        comp = np.concatenate( [comp[...,  :c_img ], _h_label], -1 )
+        
+        ########### AFFINE TRANSFOMRATIONS ################
+
+        affine_params = self.randomaffine.build_M(comp.shape[:2])
+        comp = self.randomaffine(comp, affine_params)
+
+        ###################################################
+
+        ########### ELASTIC TRANSFORMATION ###############
+
+        comp, dx_params, dy_params = self.elastic(comp)
+
+        ##################################################
+        # comp = geometric_tfx(comp)
+        ##################################################
+        # round one_hot labels to 0 or 1
+
+        t_label_h = comp[..., c_img : ]
+        t_label_h = np.rint(t_label_h)
+        assert t_label_h.max() <= 1
+        t_img = comp[..., 0 : c_img ]
+
+        ############## intensity transform ################
+
+        t_img, gamma = self.gamma_transform(t_img)
+
+        params = torch.cat([affine_params.flatten(), dx_params.flatten(), dy_params.flatten(), gamma])
+        ##################################################
+
+        if use_onehot is True:
+            t_label = t_label_h
+        else:
+            t_label = np.expand_dims(np.argmax(t_label_h, axis = -1), -1)
+        return t_img, t_label, params
+
 
     def __getitem__(self, index):
         index = index % len(self.actual_dataset)
+        # ============ GETS THE IMAGES AND LABELS AND OTHER INFOS ========== #
         curr_dict = self.actual_dataset[index]
         sup_max_cls = curr_dict['sup_max_cls']
         if sup_max_cls < 1:
@@ -249,19 +342,28 @@ class SuperpixelDataset(BaseDataset):
 
         image_t = curr_dict["img"]
         label_raw = curr_dict["lb"]
+        # ================================================================= #
 
         for _ex_cls in self.exclude_lbs:
             if curr_dict["z_id"] in self.tp1_cls_map[self.real_label_name[_ex_cls]][curr_dict["scan_id"]]: # if using setting 1, this slice need to be excluded since it contains label which is supposed to be unseen
                 return self.__getitem__(torch.randint(low = 0, high = self.__len__() - 1, size = (1,)))
 
+        # =================== KMEANS SUPERPIXEL METHOD ============#
         label_t = self.supcls_pick_binarize(label_raw, sup_max_cls)
+        #==========================================================#
 
         pair_buffer = []
 
         comp = np.concatenate( [curr_dict["img"], label_t], axis = -1 )
 
         for ii in range(self.num_rep):
-            img, lb = self.transforms(comp, c_img = 1, c_label = 1, nclass = self.nclass,  is_train = True, use_onehot = False)
+            # ============= TRANSFORMATONS ================================ #
+            img, lb, tr_params = self.transform_img_lb(comp, c_img = 1, c_label = 1, nclass = self.nclass,  is_train = True, use_onehot = False)
+
+            # -----------------------------------------
+            # LOAD PREVIOUS IMAGE FOR TRANSFORMATION TO QUERY
+            comp = np.concatenate([img, lb], axis = -1)
+            # -----------------------------------------
 
             img = torch.from_numpy( np.transpose( img, (2, 0, 1)) )
             lb  = torch.from_numpy( lb.squeeze(-1))
@@ -282,7 +384,8 @@ class SuperpixelDataset(BaseDataset):
                     "is_end": is_end,
                     "nframe": nframe,
                     "scan_id": scan_id,
-                    "z_id": z_id
+                    "z_id": z_id,
+                    'params':tr_params
                     }
 
             # Add auxiliary attributes
@@ -295,6 +398,8 @@ class SuperpixelDataset(BaseDataset):
                         sample[key_prefix + '_' + key_suffix] = aux_attrib_val[key_suffix]
             pair_buffer.append(sample)
 
+
+
         support_images = []
         support_mask = []
         support_class = []
@@ -302,6 +407,8 @@ class SuperpixelDataset(BaseDataset):
         query_images = []
         query_labels = []
         query_class = []
+
+        param_labels = []
 
         for idx, itm in enumerate(pair_buffer):
             if idx % 2 == 0:
@@ -312,12 +419,14 @@ class SuperpixelDataset(BaseDataset):
                 query_images.append(itm["image"])
                 query_class.append(1)
                 query_labels.append(  itm["label"])
+                param_labels.append(itm['tr_params'])
 
         return {'class_ids': [support_class],
             'support_images': [support_images], #
             'support_mask': [support_mask],
             'query_images': query_images, #
             'query_labels': query_labels,
+            'param_labels' : paam_labels,
         }
 
 

@@ -49,11 +49,11 @@ def get_geometric_transformer(aug, order=3):
     affine     = aug['aug'].get('affine', 0)
     alpha      = aug['aug'].get('elastic',{'alpha': 0})['alpha']
     sigma      = aug['aug'].get('elastic',{'sigma': 0})['sigma']
-    flip       = aug['aug'].get('flip', {'v': True, 'h': True, 't': True, 'p':0.125})
+    # flip       = aug['aug'].get('flip', {'v': True, 'h': True, 't': True, 'p':0.125})
 
     tfx = []
-    if 'flip' in aug['aug']:
-        tfx.append(myit.RandomFlip3D(**flip))
+    # if 'flip' in aug['aug']:
+    #     tfx.append(myit.RandomFlip3D(**flip))
 
     if 'affine' in aug['aug']:
         tfx.append(myit.RandomAffine(affine.get('rotate'),
