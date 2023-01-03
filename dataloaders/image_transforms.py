@@ -143,10 +143,10 @@ class RandomAffine(object):
 
         return final_tfx.astype(np.float32)
 
-    def __call__(self, image):
+    def __call__(self, image, M):
         # build matrix
         input_shape = image.shape[:2]
-        M = self.build_M(input_shape)
+        # M = self.build_M(input_shape)
 
         res = np.zeros_like(image)
         #if isinstance(self.interp, Sequence):
@@ -229,9 +229,13 @@ def elastic_transform_nd(image, alpha, sigma, random_state=None, order=1, lazy=F
 
     # Random affine
     blur_size = int(4*sigma) | 1
-    dx = cv2.GaussianBlur(random_state.rand(*imsize)*2-1,
+    
+    dx_params = random_state.rand(*imsize)*2-1
+    dx = cv2.GaussianBlur(dx_params,
                           ksize=(blur_size, blur_size), sigmaX=sigma) * alpha
-    dy = cv2.GaussianBlur(random_state.rand(*imsize)*2-1,
+    
+    dy_params = random_state.rand(*imsize)*2-1
+    dy = cv2.GaussianBlur(dy_params,
                           ksize=(blur_size, blur_size), sigmaX=sigma) * alpha
 
     # use as_strided to copy things over across n1...nn channels
@@ -252,7 +256,7 @@ def elastic_transform_nd(image, alpha, sigma, random_state=None, order=1, lazy=F
     if lazy:
         return indices
 
-    return map_coordinates(image, indices, order=order, mode='reflect').reshape(shape)
+    return map_coordinates(image, indices, order=order, mode='reflect').reshape(shape), dx_params, dy_params
 
 class ElasticTransform(object):
     """Apply elastic transformation on a numpy.ndarray (H x W x C)
@@ -313,5 +317,3 @@ class RandomFlip3D(object):
                 x = x[..., ::-1]
 
         return x
-
-
