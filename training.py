@@ -77,7 +77,7 @@ def main(_run, _config, _log):
         idx_split = _config['eval_fold'],
         mode='train',
         min_fg=str(_config["min_fg_data"]), # dummy entry for superpixel dataset
-        transform_params_limits=myaug.augs[_config['which_aug']],
+        transform_param_limits=myaug.augs[_config['which_aug']],
         nsup = _config['task']['n_shots'],
         scan_per_load = _config['scan_per_load'],
         exclude_list = _config["exclude_cls_list"],
