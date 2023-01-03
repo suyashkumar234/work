@@ -36,7 +36,7 @@ def cfg():
     num_workers = 4 # 0 for debugging. 
 
     dataset = 'CHAOST2_Superpix' # i.e. abdominal MRI
-    use_coco_init = True # initialize backbone with MS_COCO initialization. Anyway coco does not contain medical images
+    use_coco_init = False #True # initialize backbone with MS_COCO initialization. Anyway coco does not contain medical images
 
     ### Training
     n_steps = 100100
@@ -65,7 +65,7 @@ def cfg():
 
     # Network
     modelname = 'dlfcn_res101' # resnet 101 backbone from torchvision fcn-deeplab
-    clsname = None # 
+    clsname = 'grid_proto' # 
     reload_model_path = None # path for reloading a trained model (overrides ms-coco initialization)
     proto_grid_size = 8 # L_H, L_W = (32, 32) / 8 = (4, 4)  in training
     feature_hw = [32, 32] # feature map size, should couple this with backbone in future
