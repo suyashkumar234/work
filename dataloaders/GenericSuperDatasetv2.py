@@ -23,9 +23,25 @@ import torchvision.transforms as deftfx
 import dataloaders.image_transforms as myit
 
 from skimage import segmentation, color
+from skimage.filters import sobel
+from skimage.future import graph
+import cv2
+import matplotlib.pyplot as plt
+import networkx as nx
+
+# from graph_merge import *
 
 class SuperpixelDataset(BaseDataset):
-    def __init__(self, which_dataset, base_dir, idx_split, mode, transform_param_limits, scan_per_load, num_rep = 2, min_fg = '', nsup = 1, fix_length = None, tile_z_dim = 3, exclude_list = [], seg_method = 'ncuts', superpix_scale = 'SMALL', **kwargs):
+    def __init__(self, 
+                which_dataset, 
+                base_dir, 
+                idx_split, 
+                mode, transform_param_limits, 
+                scan_per_load, num_rep = 2, 
+                min_fg = '', nsup = 1, 
+                fix_length = None, tile_z_dim = 3, 
+                exclude_list = [], seg_method = 'ncuts', 
+                superpix_scale = 'SMALL', **kwargs):
         """
         Pseudolabel dataset
         Args:
@@ -61,7 +77,7 @@ class SuperpixelDataset(BaseDataset):
         self.nsup = nsup
         self.base_dir = base_dir
         self.img_pids = [ re.findall('\d+', fid)[-1] for fid in glob.glob(self.base_dir + "/image_*.nii.gz") ]
-        print(self.img_pids)
+        # print(self.img_pids)
         self.img_pids = CircularList(sorted( self.img_pids, key = lambda x: int(x)))
 
         # experiment configs
@@ -95,10 +111,10 @@ class SuperpixelDataset(BaseDataset):
         print(self.pid_curr_load)
 
         print("#### Setting up augmentation population ####")
-        self.affine     = self.transform_param_limits['aug'].get('affine', 0)
-        self.alpha      = self.transform_param_limits['aug'].get('elastic',{'alpha': 0})['alpha']
-        self.sigma      = self.transform_param_limits['aug'].get('elastic',{'sigma': 0})['sigma']
-        self.gamma_range = self.transform_param_limits['aug']['gamma_range']
+        self.affine     = self.transform_param_limits.get('affine', 0)
+        self.alpha      = self.transform_param_limits.get('elastic',{'alpha': 0})['alpha']
+        self.sigma      = self.transform_param_limits.get('elastic',{'sigma': 0})['sigma']
+        self.gamma_range = self.transform_param_limits['gamma_range']
 
         self.randomaffine = myit.RandomAffine(self.affine.get('rotate'),
                                              self.affine.get('shift'),
@@ -169,11 +185,13 @@ class SuperpixelDataset(BaseDataset):
         glb_idx = 0 # global index of a certain slice in a certain scan in entire dataset
 
         for scan_id, itm in self.img_lb_fids.items():
+            # print(scan_id, itm)
             if scan_id not in self.pid_curr_load:
                 continue
 
             img, _info = read_nii_bysitk(itm["img_fid"], peel_info = True) # get the meta information out
             img = img.transpose(1,2,0)
+            # print(img.shape)
             self.info_by_scan[scan_id] = _info
 
             img = np.float32(img)
@@ -233,6 +251,8 @@ class SuperpixelDataset(BaseDataset):
             self.scan_z_idx[scan_id][ii] = glb_idx
             glb_idx += 1
 
+            # print(len(out_list))
+
         return out_list
 
     def read_classfiles(self):
@@ -249,6 +269,22 @@ class SuperpixelDataset(BaseDataset):
 
         return cls_map
 
+    def cut_thresh(self,g, labels1, thresh):
+        g_ = g.copy()
+        # Because deleting edges while iterating through them produces an error.
+        to_remove = [(x, y) for x, y, d in g_.edges(data=True) if abs(g_.nodes[x]['mean color'][0] - g_.nodes[y]['mean color'][0]) >= thresh]
+        g_.remove_edges_from(to_remove)
+        comps = nx.connected_components(g_)
+        # # We construct an array which can map old labels to the new ones.
+        # # All the labels within a connected component are assigned to a single label in the output.
+        map_array = np.arange(labels1.max() + 1, dtype=labels1.dtype)
+        for i, nodes in enumerate(comps):
+            for node in nodes:
+                for label in g_.nodes[node]['labels']:
+                    map_array[label] = i
+        labels2 = map_array[labels1].copy()
+        return labels2
+
     def supcls_pick_binarize(self, image_t): #super_map, sup_max_cls, bi_val = None):
         """
         pick up a certain super-pixel class or multiple classes, and binarize it into segmentation target
@@ -263,23 +299,75 @@ class SuperpixelDataset(BaseDataset):
 
         # return np.float32(super_map == bi_val)
 
-        # if self.seg_method == 'ncuts':
-        dst = cv2.bilateralFilter(image_t,9,75,75)
-        labels1 = segmentation.slic(image_t, compactness=20, n_segments=100, start_label=1)
-        out1 = color.label2rgb(labels1, image_t, kind='avg', bg_label=0)
-        g = graph.rag_mean_color(image_t, labels1, mode='similarity', sigma = 127.)
-        labels2 = graph.cut_normalized(labels1, g)
-        out2 = color.label2rgb(labels2, image_t, kind='avg', bg_label=0)
+        dst = cv2.bilateralFilter(image_t[:,:,0],9,75,75)
+        mindst = dst.min()
+        maxdst = dst.max()
+        dst = dst - mindst
+        dst = dst / (maxdst - mindst)
 
-        return np.float32(out2==random.choice(list(range(np.unique(labels2).shape[0]))))
+        # fig, ax = plt.subplots(1,4)
+        # ax[0].imshow(image_t[:,:,0], cmap='gray')
+        # ax[0].set_title('Original')
+        # plt.show()
 
-        # elif self.seg_method == 'kmeans':
+        # labels1 = segmentation.slic(dst, compactness=100, n_segments=1000, start_label=0, sigma = 1.0)
+        labels1 = segmentation.felzenszwalb(dst, scale = 0.01, sigma = 0.1, channel_axis = None)
+        out1 = color.label2rgb(labels1, dst, kind='avg', bg_label=labels1[0,0])
+
+        minout1 = out1.min()
+        maxout1 = out1.max()
+        out1 = out1 - minout1
+        out1 = out1 / (maxout1 - minout1)
+
+        # ax[1].imshow((255*out1).astype('int'), cmap='gray') #, vmin=0, vmax=1)
+        # ax[1].set_title('SLIC Output')
+        # plt.show()
+
+        g = graph.rag_mean_color((255*out1).astype('int'), labels1, mode='similarity', sigma = 127.)
+        # lc = graph.show_rag(labels2, g, (255*dst).astype('int'))
+        # cbar = plt.colorbar(lc)
+
+        labels2 = self.cut_thresh(g, labels1, thresh = 4)
+        bg_label = [labels2[0,0], labels2[0,labels2.shape[1]-1], labels2[labels2.shape[1]-1,0], labels2[labels2.shape[1]-1,labels2.shape[1]-1]]
+        label_choices = [l for l in np.unique(labels2) if l not in bg_label]
+
+        if label_choices == []:
+            # print('REPEAT')
+            labels2 = self.cut_thresh(g, labels1, thresh = 2)
+
+        out2 = color.label2rgb(labels2, dst, kind='avg', bg_label=bg_label[0])
+        minout2 = out2.min()
+        maxout2 = out2.max()
+        out2 = out2 - minout2
+        out2 = out2 / (maxout2 - minout2)
+
+        # ax[2].imshow(out2, cmap='gray')
+        # ax[2].set_title('NCuts output')
+        # plt.show()
+        # print(labels2)
+        random_label = random.choice(np.unique(labels2))
+        
+        while (np.count_nonzero(labels2==random_label) < 255 or np.count_nonzero(labels2==random_label) > int(0.25*256*256)):
+            random_label = random.choice(label_choices)
+
+        label_t = out2[:,:,0]
+
+        label_t[labels2==random_label] = 1.0
+        label_t[labels2!=random_label] = 0.0
+
+        label_t = np.float32(label_t)
+        label_t = cv2.dilate(label_t, kernel = np.ones((5,5),np.uint8), iterations = 3)
+        # ax[3].imshow(label_t, cmap='gray', vmin=0,vmax=1)
+        # ax[3].set_title('Final Label')
+        # plt.show()
+
+        return label_t
 
 
     def gamma_transform(self, img):
         # gamma_range = aug['aug']['gamma_range']
         if isinstance(self.gamma_range, tuple):
-            gamma = np.random.rand() * (gamma_range[1] - gamma_range[0]) + gamma_range[0]
+            gamma = np.random.rand() * (self.gamma_range[1] - self.gamma_range[0]) + self.gamma_range[0]
             cmin = img.min()
             irange = (img.max() - cmin + 1e-5)
 
@@ -319,12 +407,15 @@ class SuperpixelDataset(BaseDataset):
 
         affine_params = self.randomaffine.build_M(comp.shape[:2])
         comp = self.randomaffine(comp, affine_params)
+        affine_params = torch.from_numpy(affine_params.flatten())
 
         ###################################################
 
         ########### ELASTIC TRANSFORMATION ###############
 
         comp, dx_params, dy_params = self.elastic(comp)
+        dx_params = torch.from_numpy(dx_params.flatten())
+        dy_params = torch.from_numpy(dy_params.flatten())
 
         ##################################################
         # comp = geometric_tfx(comp)
@@ -339,8 +430,9 @@ class SuperpixelDataset(BaseDataset):
         ############## intensity transform ################
 
         t_img, gamma = self.gamma_transform(t_img)
+        gamma = torch.Tensor([gamma])
 
-        params = torch.cat([affine_params.flatten(), dx_params.flatten(), dy_params.flatten(), gamma])
+        params = torch.cat([affine_params, dx_params, dy_params, gamma])
         ##################################################
 
         if use_onehot is True:
@@ -355,12 +447,12 @@ class SuperpixelDataset(BaseDataset):
         # ============ GETS THE IMAGES AND LABELS AND OTHER INFOS ========== #
         curr_dict = self.actual_dataset[index]
         # sup_max_cls = curr_dict['sup_max_cls']
-        if sup_max_cls < 1:
-            return self.__getitem__(index + 1)
+        # if sup_max_cls < 1:
+        #     return self.__getitem__(index + 1)
 
         image_t = curr_dict["img"]
         # label_raw = curr_dict["lb"]
-        print(image_t.shape)
+        # print(image_t.shape)
         # ================================================================= #
 
         for _ex_cls in self.exclude_lbs:
@@ -368,7 +460,15 @@ class SuperpixelDataset(BaseDataset):
                 return self.__getitem__(torch.randint(low = 0, high = self.__len__() - 1, size = (1,)))
 
         # =================== KMEANS SUPERPIXEL METHOD ============#
-        label_t = self.supcls_pick_binarize(image_t) # label_raw, sup_max_cls)
+        try:
+            label_t = self.supcls_pick_binarize(image_t) # label_raw, sup_max_cls)
+        except:
+            return self.__getitem__(index + 1)
+        # plt.imshow(label_t, vmin = 0, vmax = 1.0, cmap = 'gray')
+        # plt.title('Label')
+        # plt.show()
+        label_t = label_t[:,:,None]
+        
         #==========================================================#
 
         pair_buffer = []
@@ -438,14 +538,14 @@ class SuperpixelDataset(BaseDataset):
                 query_images.append(itm["image"])
                 query_class.append(1)
                 query_labels.append(  itm["label"])
-                param_labels.append(itm['tr_params'])
+                param_labels.append(itm['params'])
 
         return {'class_ids': [support_class],
             'support_images': [support_images], #
             'support_mask': [support_mask],
             'query_images': query_images, #
             'query_labels': query_labels,
-            'param_labels' : paam_labels,
+            'param_labels' : param_labels,
         }
 
 
