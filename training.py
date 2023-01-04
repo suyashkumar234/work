@@ -23,6 +23,7 @@ from util.metric import Metric
 
 from config_ssl_upload import ex
 import tqdm
+import time
 
 # config pre-trained model caching path
 os.environ['TORCH_HOME'] = "./pretrained_model"
@@ -44,6 +45,10 @@ def main(_run, _config, _log):
     torch.set_num_threads(1)
 
     _log.info('###### Create model ######')
+
+    ####################################
+    #            AGUN MODEL            #
+    ####################################
     model = FewShotSeg(pretrained_path=None, cfg=_config['model'])
 
     model = model.cuda()
@@ -88,9 +93,9 @@ def main(_run, _config, _log):
     ### dataloaders
     trainloader = DataLoader(
         tr_parent,
-        batch_size=_config['batch_size'],
+        batch_size=1, #_config['batch_size'],
         shuffle=True,
-        num_workers=_config['num_workers'],
+        num_workers=0, #_config['num_workers'],
         pin_memory=True,
         drop_last=True
     )
@@ -112,31 +117,37 @@ def main(_run, _config, _log):
     log_loss = {'loss': 0, 'align_loss': 0}
 
     _log.info('###### Training ######')
+    stime = time.time()
     for sub_epoch in range(n_sub_epoches):
         _log.info(f'###### This is epoch {sub_epoch} of {n_sub_epoches} epoches ######')
         for _, sample_batched in enumerate(trainloader):
             # Prepare input
             i_iter += 1
             # add writers
-            support_images = [[shot.cuda() for shot in way]
+            support_images = [[shot.float().cuda() for shot in way]
                               for way in sample_batched['support_images']]
             support_fg_mask = [[shot[f'fg_mask'].float().cuda() for shot in way]
                                for way in sample_batched['support_mask']]
             support_bg_mask = [[shot[f'bg_mask'].float().cuda() for shot in way]
                                for way in sample_batched['support_mask']]
 
-            query_images = [query_image.cuda()
+            query_images = [query_image.float().cuda()
                             for query_image in sample_batched['query_images']]
             query_labels = torch.cat(
                 [query_label.long().cuda() for query_label in sample_batched['query_labels']], dim=0)
 
             optimizer.zero_grad()
-            # FIXME: in the model definition, filter out the failure case where pseudolabel falls outside of image or too small to calculate a prototype
-            try:
-                query_pred, align_loss, debug_vis, assign_mats = model(support_images, support_fg_mask, support_bg_mask, query_images, isval = False, val_wsize = None)
-            except:
-                print('Faulty batch detected, skip')
-                continue
+            # FIXME: in the model definition, filter out the failure case where 
+            # pseudolabel falls outside of image or too small to calculate a prototype
+            # try:
+            query_pred, align_loss, debug_vis, assign_mats = model(support_images,
+                                                                    support_fg_mask, 
+                                                                    support_bg_mask, 
+                                                                    query_images, 
+                                                                    isval = False, val_wsize = None)
+            # except:
+                # print('Faulty batch detected, skip')
+                # continue
 
             query_loss = criterion(query_pred, query_labels)
             loss = query_loss + align_loss
@@ -156,13 +167,15 @@ def main(_run, _config, _log):
             # print loss and take snapshots
             if (i_iter + 1) % _config['print_interval'] == 0:
 
+                nt = time.time()
+
                 loss = log_loss['loss'] / _config['print_interval']
                 align_loss = log_loss['align_loss'] / _config['print_interval']
 
                 log_loss['loss'] = 0
                 log_loss['align_loss'] = 0
 
-                print(f'step {i_iter+1}: loss: {loss}, align_loss: {align_loss},')
+                print(f'step {i_iter+1}: loss: {loss}, align_loss: {align_loss}, time: {(nt-stime)/60} mins')
 
             if (i_iter + 1) % _config['save_snapshot_every'] == 0:
                 _log.info('###### Taking snapshot ######')
