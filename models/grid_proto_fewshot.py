@@ -7,8 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .alpmodule import MultiProtoAsConv
-from .backbone.torchvision_backbones import TVDeeplabRes101Encoder
+from .alpmodule2 import MultiProtoAsWCos
+from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
 # DEBUG
+from util.utils import get_tversky_loss
 from pdb import set_trace
 
 import pickle
@@ -16,7 +18,8 @@ import torchvision
 
 # options for type of prototypes
 FG_PROT_MODE = 'gridconv+' # using both local and global prototype
-BG_PROT_MODE = 'gridconv'  # using local prototype only. Also 'mask' refers to using global prototype only (as done in vanilla PANet)
+BG_PROT_MODE = 'gridconv' #gridconv  # using local prototype only. 
+# Also 'mask' refers to using global prototype only (as done in vanilla PANet)
 
 # thresholds for deciding class of prototypes
 FG_THRESH = 0.95
@@ -38,15 +41,15 @@ class FewShotSeg(nn.Module):
 
     def get_encoder(self, in_channels):
         # if self.config['which_model'] == 'deeplab_res101':
-        if self.config['which_model'] == 'dlfcn_res101':
-            use_coco_init = self.config['use_coco_init']
-            self.encoder = TVDeeplabRes101Encoder(use_coco_init)
+        # if self.config['which_model'] == 'dlfcn_res101':
+        use_coco_init = self.config['use_coco_init']
+        self.encoder = TVDeeplabRes101Encoder(use_coco_init)
 
-        else:
-            raise NotImplementedError(f'Backbone network {self.config["which_model"]} not implemented')
+        # else:
+            # raise NotImplementedError(f'Backbone network {self.config["which_model"]} not implemented')
 
         if self.pretrained_path:
-            self.load_state_dict(torch.load(self.pretrained_path))
+            self.load_state_dict(torch.load(self.pretrained_path)['model'], strict = False)
             print(f'###### Pre-trained model f{self.pretrained_path} has been loaded ######')
 
     def get_cls(self):
@@ -57,7 +60,8 @@ class FewShotSeg(nn.Module):
         feature_hw = self.config["feature_hw"]
         assert self.config['cls_name'] == 'grid_proto'
         if self.config['cls_name'] == 'grid_proto':
-            self.cls_unit = MultiProtoAsConv(proto_grid = [proto_hw, proto_hw], feature_hw =  self.config["feature_hw"]) # when treating it as ordinary prototype
+            self.cls_unit = MultiProtoAsWCos(proto_grid = [proto_hw, proto_hw], 
+                                            feature_hw =  self.config["feature_hw"]) # when treating it as ordinary prototype
         else:
             raise NotImplementedError(f'Classifier {self.config["cls_name"]} not implemented')
 
@@ -79,12 +83,17 @@ class FewShotSeg(nn.Module):
         n_shots = len(supp_imgs[0])
         n_queries = len(qry_imgs)
 
-        assert n_ways == 1, "Multi-shot has not been implemented yet" # NOTE: actual shot in support goes in batch dimension
+        assert n_ways == 1, "Multi-shot has not been implemented yet" 
+        # NOTE: actual shot in support goes in batch dimension
         assert n_queries == 1
+
+        # print(supp_imgs[0][0].shape, qry_imgs[0].shape)
 
         sup_bsize = supp_imgs[0][0].shape[0]
         img_size = supp_imgs[0][0].shape[-2:]
         qry_bsize = qry_imgs[0].shape[0]
+
+        # print(sup_bsize, qry_bsize)
 
         assert sup_bsize == qry_bsize == 1
 
@@ -122,8 +131,17 @@ class FewShotSeg(nn.Module):
                 mean_bg_msk = F.interpolate(back_mask[way].mean(dim = 0).unsqueeze(1), size = mean_sup_ft.shape[-2:], mode = 'bilinear') # [nb, C, H, W]
             '''
             # re-interpolate support mask to the same size as support feature
+            # print(fore_mask.shape, fts_size)
+            # fore_mask = fore_mask.squeeze(0)#.squeeze(0)
+            # # print(fore_mask.shape)
+            # res_fg_msk = F.interpolate(fore_mask, size = fts_size, mode = 'bilinear') #for fore_mask_w in fore_mask], dim = 0) # [nway, ns, nb, nh', nw']
+            # fore_mask = fore_mask.unsqueeze(0)#.unsqueeze(0)
+            # back_mask = back_mask.squeeze(0)#.squeeze(0)
+            # res_bg_msk = F.interpolate(back_mask, size = fts_size, mode = 'bilinear') #for back_mask_w in back_mask], dim = 0) # [nway, ns, nb, nh', nw']
+            # back_mask = back_mask.unsqueeze(0)#.unsqueeze(0)
             res_fg_msk = torch.stack([F.interpolate(fore_mask_w, size = fts_size, mode = 'bilinear') for fore_mask_w in fore_mask], dim = 0) # [nway, ns, nb, nh', nw']
             res_bg_msk = torch.stack([F.interpolate(back_mask_w, size = fts_size, mode = 'bilinear') for back_mask_w in back_mask], dim = 0) # [nway, ns, nb, nh', nw']
+            
 
 
             scores          = []
@@ -131,7 +149,9 @@ class FewShotSeg(nn.Module):
             bg_sim_maps     = []
             fg_sim_maps     = []
 
-            _raw_score, _, aux_attr = self.cls_unit(qry_fts, supp_fts, res_bg_msk, mode = BG_PROT_MODE, thresh = BG_THRESH, isval = isval, val_wsize = val_wsize, vis_sim = show_viz  )
+            _raw_score, _, aux_attr = self.cls_unit(qry_fts, supp_fts, res_bg_msk, mode = BG_PROT_MODE, 
+                                                    fg = False,thresh = BG_THRESH, isval = isval, 
+                                                    val_wsize = val_wsize, vis_sim = show_viz  )
 
             scores.append(_raw_score)
             assign_maps.append(aux_attr['proto_assign'])
@@ -139,20 +159,27 @@ class FewShotSeg(nn.Module):
                 bg_sim_maps.append(aux_attr['raw_local_sims'])
 
             for way, _msk in enumerate(res_fg_msk):
-                _raw_score, _, aux_attr = self.cls_unit(qry_fts, supp_fts, _msk.unsqueeze(0), mode = FG_PROT_MODE if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask', thresh = FG_THRESH, isval = isval, val_wsize = val_wsize, vis_sim = show_viz  )
+                _raw_score, _, aux_attr = self.cls_unit(qry_fts, supp_fts, _msk.unsqueeze(0), fg = True, 
+                                                        mode = FG_PROT_MODE, # if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask', 
+                                                        thresh = FG_THRESH, isval = isval, 
+                                                        val_wsize = val_wsize, vis_sim = show_viz  ) #if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask'
 
                 scores.append(_raw_score)
                 if show_viz:
                     fg_sim_maps.append(aux_attr['raw_local_sims'])
 
             pred = torch.cat(scores, dim=1)  # N x (1 + Wa) x H' x W'
+            # print(pred.shape)
             outputs.append(F.interpolate(pred, size=img_size, mode='bilinear'))
 
             ###### Prototype alignment loss ######
             if self.config['align'] and self.training:
-                align_loss_epi = self.alignLoss(qry_fts[:, epi], pred, supp_fts[:, :, epi],
-                                                fore_mask[:, :, epi], back_mask[:, :, epi])
-                align_loss += align_loss_epi
+                try:
+                    align_loss_epi = self.alignLoss(qry_fts[:, epi], pred, supp_fts[:, :, epi],
+                                                    fore_mask[:, :, epi], back_mask[:, :, epi])
+                    align_loss += align_loss_epi
+                except:
+                    align_loss += 0
         output = torch.stack(outputs, dim=1)  # N x B x (1 + Wa) x H x W
         output = output.view(-1, *output.shape[2:])
         assign_maps = torch.stack(assign_maps, dim = 1)
@@ -208,23 +235,25 @@ class FewShotSeg(nn.Module):
                 qry_pred_bg_msk = F.interpolate(binary_masks[0].float(), size = img_fts.shape[-2:], mode = 'bilinear') # 1, n, h ,w
                 scores = []
 
-                _raw_score_bg, _, _ = self.cls_unit(qry = img_fts, sup_x = qry_fts, sup_y = qry_pred_bg_msk.unsqueeze(-3), mode = BG_PROT_MODE, thresh = BG_THRESH )
+                _raw_score_bg, _, _ = self.cls_unit(qry = img_fts, sup_x = qry_fts, sup_y = qry_pred_bg_msk.unsqueeze(-3), fg = False, mode = BG_PROT_MODE, thresh = BG_THRESH )
 
                 scores.append(_raw_score_bg)
 
-                _raw_score_fg, _, _ = self.cls_unit(qry = img_fts, sup_x = qry_fts, sup_y = qry_pred_fg_msk.unsqueeze(-3), mode = FG_PROT_MODE if F.avg_pool2d(qry_pred_fg_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask', thresh = FG_THRESH )
+                _raw_score_fg, _, _ = self.cls_unit(qry = img_fts, sup_x = qry_fts, sup_y = qry_pred_fg_msk.unsqueeze(-3), 
+                                                    fg = True, mode = FG_PROT_MODE, # if F.avg_pool2d(qry_pred_fg_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask', 
+                                                    thresh = FG_THRESH )
                 scores.append(_raw_score_fg)
 
                 supp_pred = torch.cat(scores, dim=1)  # N x (1 + Wa) x H' x W'
                 supp_pred = F.interpolate(supp_pred, size=fore_mask.shape[-2:], mode='bilinear')
 
                 # Construct the support Ground-Truth segmentation
-                supp_label = torch.full_like(fore_mask[way, shot], 255,
-                                             device=img_fts.device).long()
+                supp_label = torch.full_like(fore_mask[way, shot], 255, device=img_fts.device).long()
+
                 supp_label[fore_mask[way, shot] == 1] = 1
                 supp_label[back_mask[way, shot] == 1] = 0
                 # Compute Loss
-                loss.append( F.cross_entropy(
-                    supp_pred, supp_label[None, ...], ignore_index=255) / n_shots / n_ways)
+                loss.append( F.cross_entropy(supp_pred, supp_label[None, ...], ignore_index=255) / n_shots / n_ways)
+                loss.append( get_tversky_loss(supp_pred.argmax(dim = 1, keepdim = True), supp_label[None, ...], 0.3, 0.7 ,1.0) / n_shots / n_ways)
 
         return torch.sum( torch.stack(loss))
