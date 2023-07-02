@@ -34,6 +34,116 @@ CLASS_LABELS = {
     },
 }
 
+# class TverskyLoss(nn.Module):
+#     r"""Criterion that computes Tversky Coeficient loss.
+
+#     According to [1], we compute the Tversky Coefficient as follows:
+
+#     .. math::
+
+#         \text{S}(P, G, \alpha; \beta) =
+#           \frac{|PG|}{|PG| + \alpha |P \ G| + \beta |G \ P|}
+
+#     where:
+#        - :math:`P` and :math:`G` are the predicted and ground truth binary
+#          labels.
+#        - :math:`\alpha` and :math:`\beta` control the magnitude of the
+#          penalties for FPs and FNs, respectively.
+
+#     Notes:
+#        - :math:`\alpha = \beta = 0.5` => dice coeff
+#        - :math:`\alpha = \beta = 1` => tanimoto coeff
+#        - :math:`\alpha + \beta = 1` => F beta coeff
+
+#     Shape:
+#         - Input: :math:`(N, C, H, W)` where C = number of classes.
+#         - Target: :math:`(N, H, W)` where each value is
+#           :math:`0 ≤ targets[i] ≤ C−1`.
+
+#     Examples:
+#         >>> N = 5  # num_classes
+#         >>> loss = tgm.losses.TverskyLoss(alpha=0.5, beta=0.5)
+#         >>> input = torch.randn(1, N, 3, 5, requires_grad=True)
+#         >>> target = torch.empty(1, 3, 5, dtype=torch.long).random_(N)
+#         >>> output = loss(input, target)
+#         >>> output.backward()
+
+#     References:
+#         [1]: https://arxiv.org/abs/1706.05721
+#     """
+
+#     def __init__(self, alpha: float, beta: float, gamma: float) -> None:
+#         super(TverskyLoss, self).__init__()
+#         self.alpha: float = alpha
+#         self.beta: float = beta
+#         self.gamma: float = gamma
+#         self.eps: float = 1e-6
+
+#     def forward(
+#             self,
+#             input: torch.Tensor,
+#             target: torch.Tensor) -> torch.Tensor:
+#         if not torch.is_tensor(input):
+#             raise TypeError("Input type is not a torch.Tensor. Got {}"
+#                             .format(type(input)))
+#         if not len(input.shape) == 4:
+#             raise ValueError("Invalid input shape, we expect BxNxHxW. Got: {}"
+#                              .format(input.shape))
+#         if not input.shape[-2:] == target.shape[-2:]:
+#             raise ValueError("input and target shapes must be the same. Got: {}"
+#                              .format(input.shape, input.shape))
+#         if not input.device == target.device:
+#             raise ValueError(
+#                 "input and target must be in the same device. Got: {}" .format(
+#                     input.device, target.device))
+#         # compute softmax over the classes axis
+#         # input_soft = F.softmax(input, dim=1)
+
+#         # create the labels one hot tensor
+#         # target_one_hot = one_hot(target, num_classes=input.shape[1], device=input.device, dtype=input.dtype)
+
+#         # compute the actual dice score
+#         dims = (1, 2, 3)
+#         intersection = (input * target).sum() #torch.sum(input * target, dims)
+#         fps = (input * (1. - target)).sum()
+#         fns = ((1. - input) * target).sum() 
+
+#         numerator = intersection
+#         denominator = intersection + self.alpha * fps + self.beta * fns
+#         tversky_loss = numerator / (denominator + self.eps)
+#         return torch.mean(torch.pow(1. - tversky_loss, self.gamma))
+
+def get_tversky_loss(inp, target, alpha = 0.3, beta = 0.7, gamma = 1.0):
+    if not torch.is_tensor(inp):
+        raise TypeError("Input type is not a torch.Tensor. Got {}"
+                        .format(type(inp)))
+    if not len(inp.shape) == 4:
+        raise ValueError("Invalid input shape, we expect BxNxHxW. Got: {}"
+                         .format(inp.shape))
+    if not inp.shape[-2:] == target.shape[-2:]:
+        raise ValueError("input and target shapes must be the same. Got: {}"
+                         .format(inp.shape, inp.shape))
+    if not inp.device == target.device:
+        raise ValueError(
+            "input and target must be in the same device. Got: {}" .format(
+                inp.device, target.device))
+    # compute softmax over the classes axis
+    # input_soft = F.softmax(input, dim=1)
+
+    # create the labels one hot tensor
+    # target_one_hot = one_hot(target, num_classes=input.shape[1], device=input.device, dtype=input.dtype)
+
+    # compute the actual dice score
+    dims = (1, 2, 3)
+    intersection = (inp * target).sum() #torch.sum(input * target, dims)
+    fps = (inp * (1. - target)).sum()
+    fns = ((1. - inp) * target).sum() 
+
+    numerator = intersection
+    denominator = intersection + alpha * fps + beta * fns
+    tversky_loss = numerator / (denominator + 1e-6)
+    return torch.mean(torch.pow(1. - tversky_loss, gamma))
+
 def get_bbox(fg_mask, inst_mask):
     """
     Get the ground truth bounding boxes
