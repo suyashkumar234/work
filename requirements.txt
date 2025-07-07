@@ -1,13 +1,67 @@
-dcm2nii
-json5==0.8.5
-jupyter==1.0.0
-nibabel==2.5.1
-numpy==1.22.0
-opencv-python==4.2.0.32
-Pillow>=8.1.1
-sacred==0.7.5
-scikit-image==0.14.0
-SimpleITK==1.2.3
-torch==1.3.0
-torchvision==0.4.1
-tqdm==4.32.2
+# M1 Mac Compatible Requirements for Medical Image Segmentation
+# Run: pip install -r requirements_mac.txt
+
+# Core PyTorch (M1 compatible)
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Medical Imaging
+nibabel>=3.0.0
+SimpleITK>=2.0.0
+dicom2nifti>=2.5.0
+pydicom>=2.4.0
+
+# Computer Vision & Image Processing
+opencv-python>=4.5.0
+scikit-image>=0.19.0
+Pillow>=10.0.0
+imageio>=2.35.0
+
+# Scientific Computing
+numpy>=1.22.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Deep Learning Utilities
+tqdm>=4.60.0
+tensorboard
+wandb>=0.15.0
+
+# Experiment Management
+sacred>=0.8.0
+PyYAML>=6.0.0
+json5>=0.9.0
+
+# Jupyter (for data exploration)
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# Networking & Async (for wandb/sacred)
+aiohttp>=3.8.0
+requests>=2.28.0
+certifi>=2022.12.0
+
+# Data Processing
+networkx>=3.0.0
+joblib>=1.3.0
+fsspec>=2024.0.0
+
+# Utilities
+click>=8.1.0
+colorama>=0.4.6
+tifffile>=2023.7.0
+setproctitle>=1.3.0
+
+# Development Tools (optional)
+ipython>=8.12.0
+debugpy>=1.8.0
+
+# Note: Removed Windows-specific packages:
+# - pywin32 (Windows only)
+# - python-gdcm (can cause issues on M1)
+# 
+# Updated versions for better M1 compatibility
+# PyTorch versions will automatically get M1-optimized builds
