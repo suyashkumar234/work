@@ -93,6 +93,7 @@ def fewshot_pairing(paired_sample, n_ways, n_shots, cnt_query, coco=False, mask_
         support_insts = [[paired_sample[cumsum_idx[i] + j]['inst'] for j in range(n_shots)]
                          for i in range(n_ways)]
     else:
+        support_scribbles = []  # ADD THIS LINE. Edited
         support_insts = []
 
     # query images, masks and class indices
@@ -139,6 +140,17 @@ def fewshot_pairing(paired_sample, n_ways, n_shots, cnt_query, coco=False, mask_
                                torch.zeros_like(query_label))[None, ...]
             query_masks[i].append(mask)
 
+        # FIX: Extract mean and std from the original samples for training visualization
+    # Get mean and std from query samples (needed for training loop visualization)
+    query_means = []
+    query_stds = []
+    for i in range(n_ways):
+        for j in range(cnt_query[i]):
+            sample_idx = cumsum_idx[i+1] - j - 1
+            # Use your actual global mean and std values
+            query_means.append(43.976137634840306)  # Your global mean
+            query_stds.append(62.870143674709354)   # Your global std
+
 
     return {'class_ids': class_ids,
             'support_images': support_images,
@@ -150,6 +162,9 @@ def fewshot_pairing(paired_sample, n_ways, n_shots, cnt_query, coco=False, mask_
             'query_labels': query_labels_tmp,
             'query_masks': query_masks,
             'query_cls_idx': query_cls_idx,
+            'mean': query_means,
+            'std': query_stds,
+
            }
 
 

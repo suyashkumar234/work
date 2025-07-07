@@ -55,7 +55,7 @@ class MultiProtoAsWCos(nn.Module):
 
         def safe_norm(x, p = 2, dim = 1, eps = 1e-4):
             x_norm = torch.norm(x, p = p, dim = dim) # .detach()
-            x_norm = torch.max(x_norm, torch.ones_like(x_norm).cuda() * eps)
+            x_norm = torch.max(x_norm, torch.ones_like(x_norm).to(x.device) * eps)
             x = x.div(x_norm.unsqueeze(1).expand_as(x))
             return x
 

@@ -36,7 +36,7 @@ class FewShotSeg(nn.Module):
         super(FewShotSeg, self).__init__()
         self.pretrained_path = pretrained_path
         self.config = cfg or {'align': False}
-        self.get_encoder(in_channels)
+        self.get_encoder(in_channels) # functions created downward
         self.get_cls()
 
     def get_encoder(self, in_channels):

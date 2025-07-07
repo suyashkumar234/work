@@ -26,7 +26,7 @@ DATASET_INFO = {
     "SABS": {
             'PSEU_LABEL_NAME': ["BGD", "SUPFG"],
 
-            'REAL_LABEL_NAME': ["BGD", "SPLEEN", "KID_R", "KID_l", "GALLBLADDER", "ESOPHAGUS", "LIVER", "STOMACH", "AORTA", "IVC",\
+            'REAL_LABEL_NAME': ["BGD", "SPLEEN", "RK", "LK", "GALLBLADDER", "ESOPHAGUS", "LIVER", "STOMACH", "AORTA", "IVC",\
               "PS_VEIN", "PANCREAS", "AG_R", "AG_L"],
             '_SEP': [0, 6, 12, 18, 24, 30],
             'MODALITY': 'CT',
@@ -106,7 +106,7 @@ def get_normalize_op(modality, fids):
             """
             Normalizing CT images, based on global statistics
             """
-            return (x_in - ct_mean) / ct_std
+            return (x_in - ct_mean) / ct_std, ct_mean, ct_std
 
         return CT_normalize #, {'mean': ct_mean, 'std': ct_std}
 
