@@ -149,7 +149,7 @@ class ManualAnnoDataset(BaseDataset):
             self.info_by_scan[scan_id] = _info
 
             img = np.float32(img)
-            img = self.norm_func(img)
+            img, mean, std = self.norm_func(img)
 
             self.scan_z_idx[scan_id] = [-1 for _ in range(img.shape[-1])]
 
@@ -167,6 +167,8 @@ class ManualAnnoDataset(BaseDataset):
             # write the beginning frame
             out_list.append( {"img": img[..., 0: 1],
                            "lb":lb[..., 0: 0 + 1],
+                           "mean": mean,
+                           "std": std,
                            "is_start": True,
                            "is_end": False,
                            "nframe": img.shape[-1],
@@ -179,6 +181,8 @@ class ManualAnnoDataset(BaseDataset):
             for ii in range(1, img.shape[-1] - 1):
                 out_list.append( {"img": img[..., ii: ii + 1],
                            "lb":lb[..., ii: ii + 1],
+                           "mean": mean,
+                           "std": std,
                            "is_start": False,
                            "is_end": False,
                            "nframe": -1,
@@ -191,6 +195,8 @@ class ManualAnnoDataset(BaseDataset):
             ii += 1 # last frame, note the is_end flag
             out_list.append( {"img": img[..., ii: ii + 1],
                            "lb":lb[..., ii: ii+ 1],
+                           "mean": mean,
+                           "std": std,  
                            "is_start": False,
                            "is_end": True,
                            "nframe": -1,
@@ -250,9 +256,11 @@ class ManualAnnoDataset(BaseDataset):
                 "label":lb,
                 "is_start": is_start,
                 "is_end": is_end,
+                "mean": curr_dict["mean"],
+                "std": curr_dict["std"],
                 "nframe": nframe,
                 "scan_id": scan_id,
-                "z_id": z_id
+                "z_id": z_id,
                 }
         # Add auxiliary attributes
         if self.aux_attrib is not None:
@@ -435,8 +443,8 @@ class ManualAnnoDataset(BaseDataset):
             support_class.append(curr_class)
             support_mask.append(  self.getMaskMedImg( itm["label"], curr_class, class_idx  ))
 
-        return {'class_ids': [support_class],
-            'support_images': [support_images], #
-            'support_mask': [support_mask],
+        return {
+            "support_images": [support_images],
+            "support_mask": [support_mask],
         }
 

@@ -248,5 +248,14 @@ class ValidationDataset(Dataset):
             part_assign = self.npart - 1
         sample["part_assign"] = part_assign
 
+            # FIX: Ensure mean and std are preserved from the underlying dataset
+        # Get fresh sample to ensure we have all keys
+        base_sample = self.dataset[idx]
+        if 'mean' in base_sample:
+            sample['mean'] = base_sample['mean']
+        if 'std' in base_sample:
+            sample['std'] = base_sample['std']
+
         return sample
+
 

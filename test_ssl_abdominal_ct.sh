@@ -7,7 +7,7 @@ export CUDA_VISIBLE_DEVICES=$GPUID1
 PROTO_GRID=8 # using 32 / 8 = 4, 4-by-4 prototype pooling window during training
 CPT="myexp"
 DATASET='SABS_Superpix'
-NWORKER=4
+NWORKER=0
 
 ALL_EV=( 0) # 5-fold cross validation (0, 1, 2, 3, 4)
 ALL_SCALE=( "MIDDLE") # config of pseudolabels
@@ -29,7 +29,7 @@ SNAPSHOT_INTERVAL=25000 # interval for saving snapshot
 SEED='1234'
 
 ###### Validation configs ######
-SUPP_ID='[6]' # using the additionally loaded scan as support
+SUPP_ID='[1]' # using the additionally loaded scan as support
 
 echo ===================================
 
@@ -46,9 +46,9 @@ do
         mkdir $LOGDIR
     fi
 
-    RELOAD_PATH='please feed the path to the trained weights here' # path to the reloaded model
+    RELOAD_PATH='/Users/suyash/Desktop/cowpro/exps/myexp_MIDDLE_0/mySSL_train_SABS_Superpix_lbgroup0_scale_MIDDLE_vfold0_SABS_Superpix_sets_0_1shot/72/snapshots/1000.pth' # path to the reloaded model
 
-    python3 validation.py with \
+    python validation.py with \
     'modelname=dlfcn_res101' \
     'usealign=True' \
     'optim_type=sgd' \

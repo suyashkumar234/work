@@ -127,3 +127,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+.DS_Store
+myenv/
+exps/
+pretrained_model/
+data/SABS/CT/
+data/SABS/RawData/
+data/SABS/sabs_CT_normalized/
+data/SABS/tmp_normalized/

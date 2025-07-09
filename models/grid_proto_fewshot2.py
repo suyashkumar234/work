@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 from .alpmodule import MultiProtoAsConv
 from .alpmodule2 import MultiProtoAsWCos
+from .contrastive_loss import PixelWiseContrastiveLoss
 from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
 # DEBUG
 from util.utils import get_tversky_loss
@@ -32,18 +33,22 @@ class FewShotSeg(nn.Module):
         in_channels:        Number of input channels
         cfg:                Model configurations
     """
-    def __init__(self, in_channels=3, pretrained_path=None, cfg=None):
+    def __init__(self, in_channels=3, pretrained_path=None, cfg=None, momentum=0.99, temperature=0.7):
         super(FewShotSeg, self).__init__()
         self.pretrained_path = pretrained_path
         self.config = cfg or {'align': False}
+        self.momentum = self.config.get('momentum', 0.99)
+        self.temperature = self.config.get('temperature', 0.1)
         self.get_encoder(in_channels)
         self.get_cls()
+        self.contrastive_loss = PixelWiseContrastiveLoss(temperature=self.temperature)
 
     def get_encoder(self, in_channels):
         # if self.config['which_model'] == 'deeplab_res101':
         # if self.config['which_model'] == 'dlfcn_res101':
         use_coco_init = self.config['use_coco_init']
-        self.encoder = TVDeeplabRes101Encoder(use_coco_init)
+        self.teacher_encoder = TVDeeplabRes101Encoder(use_coco_init)
+        self.student_encoder = TVDeeplabRes101Encoder(use_coco_init)
 
         # else:
             # raise NotImplementedError(f'Backbone network {self.config["which_model"]} not implemented')
@@ -64,6 +69,11 @@ class FewShotSeg(nn.Module):
                                             feature_hw =  self.config["feature_hw"]) # when treating it as ordinary prototype
         else:
             raise NotImplementedError(f'Classifier {self.config["cls_name"]} not implemented')
+    
+    # update the student encoder with the teacher encoder using momentum
+    def update_student_encoder(self, student_encoder):
+        for param_t, param_s in zip(self.teacher_encoder.parameters(), student_encoder.parameters()):
+            param_s.data = self.momentum * param_s.data + (1 - self.momentum) * param_t.data    
 
     def forward(self, supp_imgs, fore_mask, back_mask, qry_imgs, isval, val_wsize, show_viz = False):
         """
@@ -86,36 +96,66 @@ class FewShotSeg(nn.Module):
         assert n_ways == 1, "Multi-shot has not been implemented yet" 
         # NOTE: actual shot in support goes in batch dimension
         assert n_queries == 1
-        #print(supp_imgs[0][0].shape) # torch.Size([1, 3, 256, 256])
-        #print(qry_imgs[0].shape) # torch.Size([1, 3, 256, 256])
-        print(qry_imgs)
+
+        # print(supp_imgs[0][0].shape, qry_imgs[0].shape)- 1 for bothtorch
 
         sup_bsize = supp_imgs[0][0].shape[0]
         img_size = supp_imgs[0][0].shape[-2:]
         qry_bsize = qry_imgs[0].shape[0]
 
-        #print(sup_bsize, qry_bsize)- 1 for both
+        # print(sup_bsize, qry_bsize)
 
         assert sup_bsize == qry_bsize == 1
 
-        imgs_concat = torch.cat([torch.cat(way, dim=0) for way in supp_imgs]
+        # imgs_concat = torch.cat([torch.cat(way, dim=0) for way in supp_imgs] 
+        #                         + [torch.cat(qry_imgs, dim=0),], dim=0)
+
+        
+
+        # img_fts = self.encoder(imgs_concat, low_level = False)
+        # fts_size = img_fts.shape[-2:]
+
+        # supp_fts = img_fts[:n_ways * n_shots * sup_bsize].view(
+        #     n_ways, n_shots, sup_bsize, -1, *fts_size)  # Wa x Sh x B x C x H' x W'
+        # qry_fts = img_fts[n_ways * n_shots * sup_bsize:].view(
+        #     n_queries, qry_bsize, -1, *fts_size)   # N x B x C x H' x W'
+        # fore_mask = torch.stack([torch.stack(way, dim=0)
+        #                          for way in fore_mask], dim=0)  # Wa x Sh x B x H' x W'
+        # fore_mask = torch.autograd.Variable(fore_mask, requires_grad = True)
+        # back_mask = torch.stack([torch.stack(way, dim=0)
+        #                          for way in back_mask], dim=0)  # Wa x Sh x B x H' x W'
+        
+
+        imgs_concat_teacher = torch.cat([torch.cat(way, dim=0) for way in supp_imgs]
                                 + [torch.cat(qry_imgs, dim=0),], dim=0)
 
-        img_fts = self.encoder(imgs_concat, low_level = False)
-        fts_size = img_fts.shape[-2:]
+        imgs_concat_student = torch.cat([torch.cat(way, dim=0) for way in supp_imgs]
+                                + [torch.cat(qry_imgs, dim=0),], dim=0)
 
-        supp_fts = img_fts[:n_ways * n_shots * sup_bsize].view(
+        img_fts_teacher = self.teacher_encoder(imgs_concat_teacher, low_level = False)
+        img_fts_student = self.student_encoder(imgs_concat_student, low_level = False)
+
+        fts_size = img_fts_teacher.shape[-2:]
+
+        supp_fts_teacher = img_fts_teacher[:n_ways * n_shots * sup_bsize].view(
             n_ways, n_shots, sup_bsize, -1, *fts_size)  # Wa x Sh x B x C x H' x W'
-        qry_fts = img_fts[n_ways * n_shots * sup_bsize:].view(
-            n_queries, qry_bsize, -1, *fts_size)   # N x B x C x H' x W'
-        fore_mask = torch.stack([torch.stack(way, dim=0)
-                                 for way in fore_mask], dim=0)  # Wa x Sh x B x H' x W'
-        fore_mask = torch.autograd.Variable(fore_mask, requires_grad = True)
-        back_mask = torch.stack([torch.stack(way, dim=0)
-                                 for way in back_mask], dim=0)  # Wa x Sh x B x H' x W'
+        supp_fts_student = img_fts_student[:n_ways * n_shots * sup_bsize].view(n_ways, n_shots, sup_bsize, -1, *fts_size)
+
+        qry_fts_teacher = img_fts_teacher[n_ways * n_shots * sup_bsize:].view(n_queries, qry_bsize, -1, *fts_size)
+        qry_fts_student = img_fts_student[n_ways * n_shots * sup_bsize:].view(n_queries, qry_bsize, -1, *fts_size)
+
+        fore_mask_teacher = torch.stack([torch.stack(way, dim=0) for way in fore_mask], dim=0)
+        fore_mask_student = torch.stack([torch.stack(way, dim=0) for way in fore_mask], dim=0)
+        #fore_mask_teacher = torch.autograd.Variable(fore_mask_teacher, requires_grad = True)
+        #fore_mask_student = torch.autograd.Variable(fore_mask_student,rquired_grad=True)
+        back_mask_teacher = torch.stack([torch.stack(way, dim=0) for way in back_mask], dim=0)
+        back_mask_student = torch.stack([torch.stack(way, dim=0) for way in back_mask], dim=0)
+
+        # self.update_student_encoder(self.student_encoder)
 
         ###### Compute loss ######
         align_loss = 0
+        contrastive_loss = 0
         outputs = []
         visualizes = [] # the buffer for visualization
 
@@ -140,17 +180,36 @@ class FewShotSeg(nn.Module):
             # back_mask = back_mask.squeeze(0)#.squeeze(0)
             # res_bg_msk = F.interpolate(back_mask, size = fts_size, mode = 'bilinear') #for back_mask_w in back_mask], dim = 0) # [nway, ns, nb, nh', nw']
             # back_mask = back_mask.unsqueeze(0)#.unsqueeze(0)
-            res_fg_msk = torch.stack([F.interpolate(fore_mask_w, size = fts_size, mode = 'bilinear') for fore_mask_w in fore_mask], dim = 0) # [nway, ns, nb, nh', nw']
-            res_bg_msk = torch.stack([F.interpolate(back_mask_w, size = fts_size, mode = 'bilinear') for back_mask_w in back_mask], dim = 0) # [nway, ns, nb, nh', nw']
+            # res_fg_msk = torch.stack([F.interpolate(fore_mask_w, size = fts_size, mode = 'bilinear') for fore_mask_w in fore_mask], dim = 0) # [nway, ns, nb, nh', nw']
+            # res_bg_msk = torch.stack([F.interpolate(back_mask_w, size = fts_size, mode = 'bilinear') for back_mask_w in back_mask], dim = 0) # [nway, ns, nb, nh', nw']
             
+            # print(fore_mask_teacher.shape)- torch.Size([1, 1, 1, 256, 256])
+            # print(fore_mask_student.shape)- ''
+            # print(back_mask_teacher.shape)- ''
+            # print(back_mask_student.shape)- ''
+            res_fg_msk_teacher = torch.stack([F.interpolate(fore_mask_w, size = fts_size, mode = 'bilinear') for fore_mask_w in fore_mask_teacher], dim = 0) # [nway, ns, nb, nh', nw']
+            res_bg_msk_teacher = torch.stack([F.interpolate(back_mask_w, size = fts_size, mode = 'bilinear') for back_mask_w in back_mask_teacher], dim = 0) # [nway, ns, nb, nh', nw']
+            res_fg_msk_student = torch.stack([F.interpolate(fore_mask_w, size = fts_size, mode = 'bilinear') for fore_mask_w in fore_mask_student], dim = 0) # [nway, ns, nb, nh', nw']
+            res_bg_msk_student = torch.stack([F.interpolate(back_mask_w, size = fts_size, mode = 'bilinear') for back_mask_w in back_mask_student], dim = 0) # [nway, ns, nb, nh', nw']
+            # print(res_fg_msk_teacher.shape)
+            # print(res_bg_msk_teacher.shape)
+            # print(res_fg_msk_student.shape)
+            # print(res_bg_msk_student.shape)
+            # print(fts_size)
+            # print(supp_fts_teacher.shape)
 
+            # calculating contrastive loss
+            contrastive_loss_teacher = self.contrastive_loss(supp_fts_teacher, supp_fts_student, res_fg_msk_teacher)
+            contrastive_loss_student = self.contrastive_loss(supp_fts_student, supp_fts_teacher, res_fg_msk_student)
+            contrastive_loss = contrastive_loss_teacher + contrastive_loss_student
 
             scores          = []
             assign_maps     = []
             bg_sim_maps     = []
             fg_sim_maps     = []
 
-            _raw_score, _, aux_attr = self.cls_unit(qry_fts, supp_fts, res_bg_msk, mode = BG_PROT_MODE, 
+            
+            _raw_score, _, aux_attr = self.cls_unit(qry_fts_teacher, supp_fts_teacher, res_bg_msk_teacher, mode = BG_PROT_MODE, 
                                                     fg = False,thresh = BG_THRESH, isval = isval, 
                                                     val_wsize = val_wsize, vis_sim = show_viz  )
 
@@ -159,8 +218,8 @@ class FewShotSeg(nn.Module):
             if show_viz:
                 bg_sim_maps.append(aux_attr['raw_local_sims'])
 
-            for way, _msk in enumerate(res_fg_msk):
-                _raw_score, _, aux_attr = self.cls_unit(qry_fts, supp_fts, _msk.unsqueeze(0), fg = True, 
+            for way, _msk in enumerate(res_fg_msk_teacher):
+                _raw_score, _, aux_attr = self.cls_unit(qry_fts_teacher, supp_fts_teacher , _msk.unsqueeze(0), fg = True, 
                                                         mode = FG_PROT_MODE, # if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask', 
                                                         thresh = FG_THRESH, isval = isval, 
                                                         val_wsize = val_wsize, vis_sim = show_viz  ) #if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask'
@@ -176,8 +235,8 @@ class FewShotSeg(nn.Module):
             ###### Prototype alignment loss ######
             if self.config['align'] and self.training:
                 try:
-                    align_loss_epi = self.alignLoss(qry_fts[:, epi], pred, supp_fts[:, :, epi],
-                                                    fore_mask[:, :, epi], back_mask[:, :, epi])
+                    align_loss_epi = self.alignLoss(qry_fts_teacher[:, epi], pred, supp_fts_teacher[:, :, epi],
+                                                    fore_mask_teacher[:, :, epi], back_mask_teacher[:, :, epi])
                     align_loss += align_loss_epi
                 except:
                     align_loss += 0
@@ -187,7 +246,7 @@ class FewShotSeg(nn.Module):
         bg_sim_maps    = torch.stack(bg_sim_maps, dim = 1) if show_viz else None
         fg_sim_maps    = torch.stack(fg_sim_maps, dim = 1) if show_viz else None
 
-        return output, align_loss / sup_bsize, [bg_sim_maps, fg_sim_maps], assign_maps
+        return output, align_loss / sup_bsize, [bg_sim_maps, fg_sim_maps], assign_maps, contrastive_loss / sup_bsize
 
 
     # Batch was at the outer loop
@@ -214,7 +273,7 @@ class FewShotSeg(nn.Module):
         binary_masks = [pred_mask == i for i in range(1 + n_ways)]
 
         # skip_ways = [i for i in range(n_ways) if binary_masks[i + 1].sum() == 0]
-        # FIXME: fix this in future, we here make a stronger assumption that a positive class must be there to avoid undersegmentation/ lazyness
+        # FIXME: fix this in future we here make a stronger assumption that a positive class must be there to avoid undersegmentation/ lazyness
         skip_ways = []
 
         ### added for matching dimensions to the new data format
@@ -258,3 +317,4 @@ class FewShotSeg(nn.Module):
                 loss.append( get_tversky_loss(supp_pred.argmax(dim = 1, keepdim = True), supp_label[None, ...], 0.3, 0.7 ,1.0) / n_shots / n_ways)
 
         return torch.sum( torch.stack(loss))
+
