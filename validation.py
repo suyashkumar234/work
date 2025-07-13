@@ -213,7 +213,7 @@ def main(_run, _config, _log):
                     # plt.show()
                     # print(len(sup_img_part),len(sup_img_part[0]),len(sup_img_part[0][0]),sup_img_part[0][0].shape,sup_img_part[0][0][0].shape)
 
-                    query_pred, _, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
+                    query_pred, _, _, _, _, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
 
                     # print(query_pred.cpu().numpy().shape,query_labels.cpu().numpy().shape)
                     # print(query_pred.min(), query_pred.max()) #/3)**0.5)

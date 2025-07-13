@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from .alpmodule import MultiProtoAsConv
 from .alpmodule2 import MultiProtoAsWCos
-from .contrastive_loss import PixelWiseContrastiveLoss
+from .contrastive_loss import PixelWiseContrastiveLoss, OrganAwareContrastiveLoss, TwoLevelContrastiveLoss
 from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
 # DEBUG
 from util.utils import get_tversky_loss
@@ -41,7 +41,14 @@ class FewShotSeg(nn.Module):
         self.temperature = self.config.get('temperature', 0.1)
         self.get_encoder(in_channels)
         self.get_cls()
-        self.contrastive_loss = PixelWiseContrastiveLoss(temperature=self.temperature)
+        # Use two-level contrastive loss for better organ clustering with symmetric negative pairs
+        self.contrastive_loss = TwoLevelContrastiveLoss(
+            temperature=self.temperature,
+            spatial_weight=0.3,
+            feature_weight=0.7,
+            spatial_threshold=5.0,
+            min_organ_size=10
+        )
 
     def get_encoder(self, in_channels):
         # if self.config['which_model'] == 'deeplab_res101':
@@ -199,9 +206,9 @@ class FewShotSeg(nn.Module):
             # print(supp_fts_teacher.shape)
 
             # calculating contrastive loss
-            contrastive_loss_teacher = self.contrastive_loss(supp_fts_teacher, supp_fts_student, res_fg_msk_teacher)
-            contrastive_loss_student = self.contrastive_loss(supp_fts_student, supp_fts_teacher, res_fg_msk_student)
-            contrastive_loss = contrastive_loss_teacher + contrastive_loss_student
+            contrastive = self.contrastive_loss(supp_fts_teacher, supp_fts_student, res_fg_msk_teacher, res_fg_msk_student)
+            
+            
 
             scores          = []
             assign_maps     = []
@@ -246,7 +253,7 @@ class FewShotSeg(nn.Module):
         bg_sim_maps    = torch.stack(bg_sim_maps, dim = 1) if show_viz else None
         fg_sim_maps    = torch.stack(fg_sim_maps, dim = 1) if show_viz else None
 
-        return output, align_loss / sup_bsize, [bg_sim_maps, fg_sim_maps], assign_maps, contrastive_loss / sup_bsize
+        return output, align_loss / sup_bsize, [bg_sim_maps, fg_sim_maps], assign_maps, contrastive_loss / sup_bsize, supp_fts_teacher, supp_fts_student, res_fg_msk_teacher, res_fg_msk_student
 
 
     # Batch was at the outer loop

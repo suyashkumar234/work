@@ -14,7 +14,7 @@ import numpy as np
 
 
 from models.grid_proto_fewshot2 import FewShotSeg
-from models.contrastive_loss import PixelWiseContrastiveLoss
+#from models.contrastive_loss import PixelWiseContrastiveLoss
 from dataloaders.dev_customized_med import med_fewshot
 from dataloaders.GenericSuperDatasetv2 import SuperpixelDataset
 from dataloaders.dataset_utils import DATASET_INFO # contains information about the dataset
@@ -23,7 +23,7 @@ import dataloaders.augutils as myaug # contains data augmentation functions
 from util.utils import set_seed, t2n, to01, compose_wt_simple, get_tversky_loss
 from util.metric import Metric
 from util.device_utils import setup_device_and_threads, to_device  # New import
-
+from util.visualization import visualize_tsne_with_labels
 from config_ssl_upload import ex
 import tqdm
 import time
@@ -218,7 +218,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             mean = [m for m in sample_batched["mean"]]
             std = [s for s in sample_batched["std"]]
             ########################################################################
-            query_pred, align_loss, debug_vis, assign_mats, contrastive_loss = model(support_images,
+            query_pred, align_loss, debug_vis, assign_mats, contrastive_loss, supp_fts_teacher, supp_fts_student, res_fg_msk_teacher, res_fg_msk_student = model(support_images,
                                                                     support_fg_mask, 
                                                                     support_bg_mask, 
                                                                     query_images, 
@@ -300,5 +300,51 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 
             if (i_iter - 2) > _config['n_steps']:
                 return 1 # finish up
+
+            # Add t-SNE visualization every few intervals
+            if (i_iter + 1) % _config['print_interval'] == 0:  # Every 4 intervals
+                try:
+                    # Get features from your model (adjust indices as needed)
+                    feat_teacher = supp_fts_teacher[0, 0, 0]  # First way, first shot, first batch
+                    feat_student = supp_fts_student[0, 0, 0]
+                    mask_teacher = res_fg_msk_teacher[0, 0, 0]
+                    mask_student = res_fg_msk_student[0, 0, 0]
+                    
+                    # Add batch dimension to match expected format (B, C, H, W)
+                    feat_teacher = feat_teacher.unsqueeze(0)  # (1, C, H, W)
+                    feat_student = feat_student.unsqueeze(0)  # (1, C, H, W)
+                    mask_teacher = mask_teacher.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+                    mask_student = mask_student.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+                    
+                    # Create visualization directory
+                    viz_dir = f'{_run.observers[0].dir}/trainsnaps'
+                    os.makedirs(viz_dir, exist_ok=True)
+                    
+                    # Generate t-SNE visualization
+                    visualize_tsne_with_labels(
+                        feat_teacher, mask_teacher,
+                        f'{viz_dir}/tsne_{i_iter+1}.png',
+                        n_samples=500,    # More samples = better visualization but slower
+                        perplexity=30     # Higher = more global structure, lower = more local structure
+                    )
+                    
+                    # # Generate similarity matrix
+                    # visualize_feature_similarity(
+                    #     feat_teacher, feat_student, mask,
+                    #     f'{viz_dir}/similarity_{i_iter+1}.png'
+                    # )
+                    
+                    # # Generate feature maps
+                    # visualize_feature_maps(
+                    #     feat_teacher, feat_student, mask,
+                    #     f'{viz_dir}/features_{i_iter+1}.png',
+                    #     num_channels=8
+                    # )
+                    
+                    print(f'Visualizations saved for iteration {i_iter+1}')
+                    
+                except Exception as e:
+                    print(f'Visualization failed: {e}')
+                    # Continue training even if visualization fails
 
 

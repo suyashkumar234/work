@@ -10,6 +10,7 @@ from pdb import set_trace
 import matplotlib.pyplot as plt
 # for unit test from spatial_similarity_module import NONLocalBlock2D, LayerNorm
 
+
 class MultiProtoAsWCos(nn.Module):
     def __init__(self, proto_grid, feature_hw, upsample_mode = 'bilinear'):
         """
