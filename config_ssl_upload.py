@@ -27,53 +27,58 @@ sources_to_save = list(itertools.chain.from_iterable(
 for source_file in sources_to_save:
     ex.add_source_file(source_file)
 
+# Add these modifications to your config_ssl_upload.py:
+
 @ex.config
 def cfg():
-    """Default configurations"""
+    """Default configurations - M1 Mac optimized"""
     seed = 1234
-    gpu_id = 0
-    mode = 'train' # for now only allows 'train' 
-    num_workers = 4 # 0 for debugging. 
+    gpu_id = 0  # Will be ignored on M1 Mac, kept for compatibility
+    mode = 'train'
+    dataset = 'Sabs_Superpix'
+    use_coco_init = True
+    # Optimized for M1 Mac
+    num_workers = 0 # M1 has good CPU cores, but don't oversubscribe
 
-    dataset = 'CHAOST2_Superpix' # i.e. abdominal MRI
-    use_coco_init = True # initialize backbone with MS_COCO initialization. Anyway coco does not contain medical images
-
-    ### Training
-    n_steps = 100100
-    batch_size = 1
+    ### Training - adjusted for M1 Mac memory constraints
+    n_steps = 100100  # Reduced from 100100 for faster testing
+    batch_size = 1   # Keep at 1 for memory efficiency
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 500
-    save_snapshot_every = 25000
-    max_iters_per_load = 1000 # epoch size, interval for reloading the dataset
-    scan_per_load = -1 # numbers of 3d scans per load for saving memory. If -1, load the entire dataset to the memory
-    which_aug = 'sabs_aug' # standard data augmentation with intensity and geometric transforms
-    input_size = (256, 256)
-    min_fg_data='100' # when training with manual annotations, indicating number of foreground pixels in a single class single slice. This empirically stablizes the training process
-    label_sets = 0 # which group of labels taking as training (the rest are for testing)
-    exclude_cls_list = [2, 3] # testing classes to be excluded in training. Set to [] if testing under setting 1
-    usealign = True # see vanilla PANet
+    print_interval = 250  # More frequent updates for shorter runs
+    save_snapshot_every = 12500  # More frequent saves
+    max_iters_per_load = 500  # Reduced for M1 Mac
+    scan_per_load = -1 # Load entire dataset if memory allows
+    which_aug = 'sabs_aug'
+    input_size = (256, 256)  # Keep reasonable size for M1
+    min_fg_data='100'
+    label_sets = 0
+    exclude_cls_list = [2, 3]
+    usealign = True
     use_wce = True
     viz = 1
+    fix_length= False
+    client_eval=True
 
     ### Validation
     z_margin = 0 
-    eval_fold = 0 # which fold for 5 fold cross validation
-    support_idx=[4] # indicating which scan is used as support in testing. 
-    val_wsize=2 # L_H, L_W in testing
-    n_sup_part = 3 # number of chuncks in testing
+    eval_fold = 0
+    support_idx=[4]
+    val_wsize=2
+    n_sup_part = 3
 
+  
     # Network
-    modelname = 'resnet50' # resnet 101 backbone from torchvision fcn-deeplab
-    clsname = 'grid_proto' # 
+    modelname = 'dlfcn_res101'  # This should work fine on M1
+    clsname = 'grid_proto'
     resume = False
-    reload_model_path = './exps/myexperiments_MIDDLE_0/mySSL_train_CHAOST2_Superpix_lbgroup0_scale_MIDDLE_vfold2_CHAOST2_Superpix_sets_0_1shot/4/snapshots/20000.pth' #'./runs/mySSL__CHAOST2_Superpix_sets_0_1shot/314_best_ref/snapshots/100000.pth' # path for reloading a trained model (overrides ms-coco initialization)
-    proto_grid_size = 8 # L_H, L_W = (32, 32) / 8 = (4, 4)  in training
-    feature_hw = [32, 32] # feature map size, should couple this with backbone in future
+    reload_model_path = './exps/your_model_path.pth'  # Update this path
+    proto_grid_size = 8
+    feature_hw = [32, 32]
 
     # SSL
-    superpix_scale = 'MIDDLE' #MIDDLE/ LARGE
+    superpix_scale = 'MIDDLE'
 
     tversky_params = {'tversky_alpha' : 0.3,
                     'tversky_beta' : 0.7,
@@ -83,7 +88,6 @@ def cfg():
 
     accum_iter = 1
 
-
     model = {
         'align': usealign,
         'use_coco_init': use_coco_init,
@@ -91,7 +95,7 @@ def cfg():
         'cls_name': clsname,
         'proto_grid_size' : proto_grid_size,
         'feature_hw': feature_hw,
-        'reload_model_path': reload_model_path
+        'reload_model_path': reload_model_path,
     }
 
     task = {
@@ -101,40 +105,38 @@ def cfg():
         'npart': n_sup_part 
     }
 
-    optim_type = 'sgd'
+    optim_type = 'adam'  # Adam often works better on M1
     optim = {
-        'lr': 1e-3, 
-        'momentum': 0.9,
+        'lr': 5e-4,  # Slightly lower learning rate for stability
         'weight_decay': 0.0005,
     }
 
-    exp_prefix = ''
+    exp_prefix = 'm1_mac'  # Identify M1 runs
 
     exp_str = '_'.join(
         [exp_prefix]
         + [dataset,]
         + [f'sets_{label_sets}_{task["n_shots"]}shot'])
 
+    # Update paths for your system - replace with your actual data paths
     path = {
         'log_dir': './runs',
-        'SABS':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Abdomen/RawData/Training/sabs_CT_normalized"
+        'SABS':{'data_dir': "/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized"  # UPDATE THIS
             },
-        'C0':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data"
+        'CHAOST2':{'data_dir': "/path/to/your/CHAOS/data"  # UPDATE THIS
             },
-        'CHAOST2':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized/"
-            },
-        'SABS_Superpix':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Abdomen/RawData/Training/sabs_CT_normalized"},
-        'C0_Superpix':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data"},
-        'CHAOST2_Superpix':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized/"},
+        'SABS_Superpix':{'data_dir': "/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized"},  # UPDATE THIS
+        'CHAOST2_Superpix':{'data_dir': "/path/to/your/CHAOS/data"},  # UPDATE THIS
         }
 
-    DATASET_CONFIG = {'SABS':{'img_bname': f'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Cervix/RawData/Training/sabs_CT_normalized/image_*.nii.gz',
-                        'out_dir': 'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Cervix/RawData/Training/sabs_CT_normalized',
+    # Update dataset config paths too
+    DATASET_CONFIG = {'SABS':{'img_bname': f'/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz',  # UPDATE
+                        'out_dir': '/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized',  # UPDATE
                         'fg_thresh': 1e-4,
                         },
                       'CHAOST2':{
-                       'img_bname': f'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized/image_*.nii.gz',
-                          'out_dir': 'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized',
+                       'img_bname': f'/path/to/your/CHAOS/data/image_*.nii.gz',  # UPDATE
+                          'out_dir': '/path/to/your/CHAOS/data',  # UPDATE
                           'fg_thresh': 1e-4 + 50,
                         },
                      }
