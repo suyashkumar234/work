@@ -384,4 +384,3 @@ class CircularList(list):
         return range(start, stop, step)
 
         '''
-

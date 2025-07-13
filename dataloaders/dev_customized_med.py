@@ -166,48 +166,19 @@ def fewshot_pairing(paired_sample, n_ways, n_shots, cnt_query, coco=False, mask_
             'std': query_stds,
 
            }
-
-
 def med_fewshot(dataset_name, base_dir, idx_split, mode, scan_per_load,
         transforms, act_labels, n_ways, n_shots, max_iters_per_load, min_fg = '', n_queries=1, fix_parent_len = None, exclude_list = [], **kwargs):
     """
-    Dataset wrapper
-    Args:
-        dataset_name:
-            indicates what dataset to use
-        base_dir:
-            dataset directory
-        mode: 
-            which mode to use
-            choose from ('train', 'val', 'trainval', 'trainaug')
-        idx_split:
-            index of split
-        scan_per_load:
-            number of scans to load into memory as the dataset is large
-            use that together with reload_buffer
-        transforms:
-            transformations to be performed on images/masks
-        act_labels:
-            active labels involved in training process. Should be a subset of all labels
-        n_ways:
-            n-way few-shot learning, should be no more than # of object class labels
-        n_shots:
-            n-shot few-shot learning
-        max_iters_per_load:
-            number of pairs per load (epoch size)
-        n_queries:
-            number of query images
-        fix_parent_len:
-            fixed length of the parent dataset
+    Dataset wrapper - Fixed version
     """
     med_set = ManualAnnoDataset
-
 
     mydataset = med_set(which_dataset = dataset_name, base_dir=base_dir, idx_split = idx_split, mode = mode,\
          scan_per_load = scan_per_load, transforms=transforms, min_fg = min_fg, fix_length = fix_parent_len,\
          exclude_list = exclude_list, **kwargs)
 
-    mydataset.add_attrib('basic', attrib_basic, {})
+    # Fix: Provide the class_id parameter that attrib_basic expects
+    mydataset.add_attrib('basic', attrib_basic, {'class_id': 1})
 
     # Create sub-datasets and add class_id attribute. Here the class file is internally loaded and reloaded inside
     subsets = mydataset.subsets([{'basic': {'class_id': ii}}
@@ -224,6 +195,63 @@ def med_fewshot(dataset_name, base_dir, idx_split, mode, scan_per_load,
                                     (fewshot_pairing, {'n_ways': n_ways, 'n_shots': n_shots,
                                         'cnt_query': cnt_query, 'mask_only': True})])
     return paired_data, mydataset
+
+# def med_fewshot(dataset_name, base_dir, idx_split, mode, scan_per_load,
+#         transforms, act_labels, n_ways, n_shots, max_iters_per_load, min_fg = '', n_queries=1, fix_parent_len = None, exclude_list = [], **kwargs):
+#     """
+#     Dataset wrapper
+#     Args:
+#         dataset_name:
+#             indicates what dataset to use
+#         base_dir:
+#             dataset directory
+#         mode: 
+#             which mode to use
+#             choose from ('train', 'val', 'trainval', 'trainaug')
+#         idx_split:
+#             index of split
+#         scan_per_load:
+#             number of scans to load into memory as the dataset is large
+#             use that together with reload_buffer
+#         transforms:
+#             transformations to be performed on images/masks
+#         act_labels:
+#             active labels involved in training process. Should be a subset of all labels
+#         n_ways:
+#             n-way few-shot learning, should be no more than # of object class labels
+#         n_shots:
+#             n-shot few-shot learning
+#         max_iters_per_load:
+#             number of pairs per load (epoch size)
+#         n_queries:
+#             number of query images
+#         fix_parent_len:
+#             fixed length of the parent dataset
+#     """
+#     med_set = ManualAnnoDataset
+
+
+#     mydataset = med_set(which_dataset = dataset_name, base_dir=base_dir, idx_split = idx_split, mode = mode,\
+#          scan_per_load = scan_per_load, transforms=transforms, min_fg = min_fg, fix_length = fix_parent_len,\
+#          exclude_list = exclude_list, **kwargs)
+
+#     mydataset.add_attrib('basic', attrib_basic, {})
+
+#     # Create sub-datasets and add class_id attribute. Here the class file is internally loaded and reloaded inside
+#     subsets = mydataset.subsets([{'basic': {'class_id': ii}}
+#         for ii, _ in enumerate(mydataset.label_name)])
+
+#     # Choose the classes of queries
+#     cnt_query = np.bincount(random.choices(population=range(n_ways), k=n_queries), minlength=n_ways)
+#     # Number of queries for each way
+#     # Set the number of images for each class
+#     n_elements = [n_shots + x for x in cnt_query] # <n_shot> supports + <cnt_quert>[i] queries 
+#     # Create paired dataset. We do not include background.
+#     paired_data = ReloadPairedDataset([subsets[ii] for ii in act_labels], n_elements=n_elements, curr_max_iters=max_iters_per_load, 
+#                                 pair_based_transforms=[
+#                                     (fewshot_pairing, {'n_ways': n_ways, 'n_shots': n_shots,
+#                                         'cnt_query': cnt_query, 'mask_only': True})])
+#     return paired_data, mydataset
 
 def update_loader_dset(loader, parent_set):
     """
