@@ -552,7 +552,9 @@ class SuperpixelDataset(BaseDataset):
             if idx % 2 == 0:
                 support_images.append(itm["image"])
                 support_class.append(1) # pseudolabel class
-                support_mask.append(  self.getMaskMedImg( itm["label"], 1, [1]  ))
+                # Get binary masks for existing pipeline
+                binary_masks = self.getMaskMedImg( itm["label"], 1, [1]  )
+                support_mask.append(binary_masks)
                 support_params.append(itm['params'])
 
             else:

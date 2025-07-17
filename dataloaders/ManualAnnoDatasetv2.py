@@ -82,7 +82,7 @@ class ManualAnnoDataset(BaseDataset): # inheriting functions from class BaseData
         self.info_by_scan = None
         self.img_lb_fids = self.organize_sample_fids() # information of scans of the entire fold-
         #print(self.img_lb_fids)-{'7': {'img_fid': 'E:\\Suyash\\cowpro\\data\\SABS\\sabs_CT_normalized\\image_7.nii.gz', 'lbs_fid': 'E:\\Suyash\\cowpro\\data\\SABS\\sabs_CT_normalized\\label_7.nii.gz'}
-
+        
         if extern_normalize_func is not None: # helps to keep consistent between training and testing dataset.
             self.norm_func = extern_normalize_func
             print(f'###### Dataset: using external normalization statistics ######') # for testing or validation 
@@ -105,7 +105,7 @@ class ManualAnnoDataset(BaseDataset): # inheriting functions from class BaseData
         else:
             raise Exception
         # print(self.scan_ids, self.pid_curr_load)
-        self.actual_dataset = self.read_dataset()
+        self.actual_dataset = self.read_dataset() # check read_dataset function ?
         #print(self.actual_dataset )- prints a dictionary img data as 'img' and data shape is (256,256,1), label data similar to img data and other meta data 'is_start': False, 'is_end': False, 'nframe': -1, 'scan_id': '0', 'z_id': 6
         self.size = len(self.actual_dataset)
         #print(self.size)-total number of slice loaded from all the patient in the current fold 

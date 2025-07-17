@@ -154,6 +154,8 @@ class CircularList(list):
         if step is None:
             step = 1
         return range(start, stop, step)
+
+        
 '''
 """Util functions
 Extended from original PANet code

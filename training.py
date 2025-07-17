@@ -12,16 +12,20 @@ from torch.optim.lr_scheduler import MultiStepLR
 import torch.backends.cudnn as cudnn
 import numpy as np
 
+
 from models.grid_proto_fewshot import FewShotSeg
+#from models.contrastive import SupervisedPixelWiseContrastiveLoss
 from dataloaders.dev_customized_med import med_fewshot
-from dataloaders.GenericSuperDatasetv2 import SuperpixelDataset
+#from dataloaders.GenericSuperDatasetv2 import SuperpixelDataset
+from dataloaders.ManualAnnoDatasetv2 import ManualAnnoDataset
 from dataloaders.dataset_utils import DATASET_INFO # contains information about the dataset
 import dataloaders.augutils as myaug # contains data augmentation functions
 
 from util.utils import set_seed, t2n, to01, compose_wt_simple, get_tversky_loss
 from util.metric import Metric
 from util.device_utils import setup_device_and_threads, to_device  # New import
-
+from util.organ_visualization import create_organ_visualizer  # Updated import for organ visualization
+#from util.visualization import visualize_tsne_with_labels
 from config_ssl_upload import ex
 import tqdm
 import time
@@ -135,6 +139,13 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
     #     fix_length = _config["max_iters_per_load"] if (data_name == 'C0_Superpix') or (data_name == 'CHAOST2_Superpix') else None, # if the dataset is C0, CHAOST2, or SABS, then we fix the length of the dataset to the number of images in the dataset     
     #     dataset_config = _config['DATASET_CONFIG']  # dataset configuration
     # )
+
+# iteration: One batch of data processed (forward + backward pass).
+# Load: A group of iterations, using a subset of the dataset loaded into memory at once.
+
+    # print("About to print tr_parent", flush=True)
+    # print(tr_parent, flush=True) # <dataloaders.GenericSuperDatasetv2.SuperpixelDataset object at 0x15a06ff20>
+    # print("Printed tr_parent", flush=True)
     dataset, tr_parent = med_fewshot(
         dataset_name=baseset_name,
         base_dir=_config['path'][data_name]['data_dir'],
@@ -157,14 +168,6 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
     dataset.norm_func = tr_parent.norm_func
     print("Dataset length:", len(dataset))   
 
-# iteration: One batch of data processed (forward + backward pass).
-# Load: A group of iterations, using a subset of the dataset loaded into memory at once.
-
-    # print("About to print tr_parent", flush=True)
-    # print(tr_parent, flush=True) # <dataloaders.GenericSuperDatasetv2.SuperpixelDataset object at 0x15a06ff20>
-    # print("Printed tr_parent", flush=True)
-
-
     ### dataloaders: DataLoader is a class in PyTorch that wraps an iterable around the dataset to enable easy access to batches.
     trainloader = DataLoader(
         dataset, # tr_parent is the dataset object, it is a collection of data and labels, it is used to load the data and labels into the model
@@ -175,7 +178,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         pin_memory=True if device.type == 'cuda' else False,  # Only pin memory for CUDA
         drop_last=True # ?
     )
-    print("Number of batches per epoch:", len(trainloader))
+
     _log.info('###### Set optimizer ######')
     if _config['optim_type'] == 'sgd':
         print("Using SGD optimizer")
@@ -205,7 +208,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
     i_iter = 0 # total number of iteration
     n_sub_epoches = _config['n_steps'] // _config['max_iters_per_load'] #deciding the number of epochs 
 
-    log_loss = {'loss': 0, 'align_loss': 0} 
+    log_loss = {'loss': 0, 'align_loss': 0, 'contrastive_loss': 0} 
 
     _log.info('###### Training ######')
     stime = time.time()
@@ -214,7 +217,6 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         for _, sample_batched in enumerate(trainloader): # trainloader is the dataloader defined in torch.utils.data , sample_batched is the batch of data
             # Prepare input
             i_iter += 1
-            print(f"Processing iteration {i_iter}", flush=True)  # Debug print
             # Modified to use device-agnostic approach
             # print("About to print sample_batched", flush=True)
             # print(sample_batched, flush=True) 
@@ -225,18 +227,20 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
                                for way in sample_batched['support_mask']] # support_fg_mask is a list of lists, each list contains the foreground mask for a way
             support_bg_mask = [[shot[f'bg_mask'].float().to(device) for shot in way]
                                for way in sample_batched['support_mask']] # support_bg_mask is a list of lists, each list contains the background mask for a way
-            
+
             query_images = [query_image.float().to(device)
                             for query_image in sample_batched['query_images']]
             query_labels = torch.cat(
                 [query_label.long().to(device) for query_label in sample_batched['query_labels']], dim=0)
 
             optimizer.zero_grad()
+            # update the student encoder with the teacher encoder using momentum
+            model.update_student_encoder(model.student_encoder)
             
             mean = [m for m in sample_batched["mean"]]
             std = [s for s in sample_batched["std"]]
             ########################################################################
-            query_pred, align_loss, debug_vis, assign_mats = model(support_images,
+            query_pred, align_loss, debug_vis, assign_mats, contrastive_loss, supp_fts_teacher, supp_fts_student, res_fg_msk_teacher, res_fg_msk_student = model(support_images,
                                                                     support_fg_mask, 
                                                                     support_bg_mask, 
                                                                     query_images, 
@@ -244,19 +248,34 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             ########################################################################
 
             query_loss = criterion(query_pred, query_labels) + get_tversky_loss(query_pred.argmax(dim = 1, keepdim = True), query_labels[None, ...], 0.3, 0.7 ,1.0)
-            loss = query_loss + align_loss
+            loss = query_loss + align_loss + contrastive_loss
             loss.backward()
             optimizer.step()
+
+            # # After optimizer step
+            # teacher_params_after = [p.clone().detach() for p in model.teacher_encoder.parameters()]
+            # student_params_after = [p.clone().detach() for p in model.student_encoder.parameters()]
+
+            # # Compare
+            # teacher_changed = any([(before != after).any() for before, after in zip(teacher_params_before, teacher_params_after)])
+            # student_changed = any([(before != after).any() for before, after in zip(student_params_before, student_params_after)])
+
+            # print(f"Teacher params changed: {teacher_changed}")
+            # print(f"Student params changed: {student_changed}")
+
             scheduler.step()
 
             # Log loss
             query_loss = query_loss.detach().data.cpu().numpy()
             align_loss = align_loss.detach().data.cpu().numpy() if align_loss != 0 else 0
+            contrastive_loss = contrastive_loss.detach().data.cpu().numpy() if contrastive_loss != 0 else 0
 
             _run.log_scalar('loss', query_loss)
             _run.log_scalar('align_loss', align_loss)
+            _run.log_scalar('contrastive_loss', contrastive_loss)
             log_loss['loss'] += query_loss # query_loss is the loss for the query images
             log_loss['align_loss'] += align_loss # align_loss is the loss for the alignment of the support images and the query images
+            log_loss['contrastive_loss'] += contrastive_loss # contrastive_loss is the loss for the contrastive loss
 
             # print loss and take snapshots
             if (i_iter + 1) % _config['print_interval'] == 0:
@@ -268,6 +287,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 
                 log_loss['loss'] = 0
                 log_loss['align_loss'] = 0
+                log_loss['contrastive_loss'] = 0
 
                 fig, ax = plt.subplots(1,2)
                 si = (support_images[0][0][0].cpu()*std[0]+mean[0]).numpy().transpose((1,2,0))
@@ -287,8 +307,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
                 plt.savefig(os.path.join(f'{_run.observers[0].dir}/trainsnaps', f'{i_iter + 1}.png'), bbox_inches='tight')
                 plt.close(fig)
 
-                print(f'step {i_iter+1}: loss: {loss}, align_loss: {align_loss}, time: {(nt-stime)/60} mins')
-                print(i_iter)
+                print(f'step {i_iter+1}: loss: {loss}, align_loss: {align_loss}, contrastive_loss: {contrastive_loss}, time: {(nt-stime)/60} mins')
 
             if (i_iter + 1) % _config['save_snapshot_every'] == 0:
                 _log.info('###### Taking snapshot ######')
@@ -303,3 +322,64 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 
             if (i_iter - 2) > _config['n_steps']:
                 return 1 # finish up
+
+            # Add organ separation visualization every few intervals
+            if (i_iter + 1) % (_config['print_interval'] * 2) == 0:  # Every 8 intervals to avoid too many plots
+                try:
+                    # Create organ visualizer
+                    viz_dir = f'{_run.observers[0].dir}/organ_visualizations'
+                    visualizer = create_organ_visualizer(dataset_name=baseset_name, save_dir=viz_dir)
+                    
+                    # Get organ class information from the dataloader
+                    # The class_ids are available in the sample_batched
+                    class_ids = sample_batched.get('class_ids', [1])  # Default to [1] if not available
+                    
+                    # Create organ class tensors for each sample in the batch
+                    # For 1-way few-shot, each way represents one organ class
+                    n_ways = len(support_images)
+                    n_shots = len(support_images[0])
+                    sup_bsize = len(support_images[0][0])
+                    
+                    # Create organ class tensor: (n_ways, n_shots, sup_bsize)
+                    organ_classes = torch.zeros(n_ways, n_shots, sup_bsize, device=device)
+                    for way in range(n_ways):
+                        organ_classes[way, :, :] = class_ids[way]
+                    
+                    # Reshape to match feature dimensions: (B,)
+                    organ_classes_flat = organ_classes.view(-1)
+                    
+                    # Get features and masks from model output
+                    # supp_fts_teacher shape: (n_ways, n_shots, sup_bsize, C, H, W)
+                    # res_fg_msk_teacher shape: (n_ways, n_shots, sup_bsize, H, W)
+                    
+                    # Reshape to (B, C, H, W) and (B, H, W)
+                    supp_fts_teacher_flat = supp_fts_teacher.view(-1, *supp_fts_teacher.shape[-3:])
+                    supp_fts_student_flat = supp_fts_student.view(-1, *supp_fts_student.shape[-3:])
+                    res_fg_msk_teacher_flat = res_fg_msk_teacher.view(-1, *res_fg_msk_teacher.shape[-2:])
+                    res_fg_msk_student_flat = res_fg_msk_student.view(-1, *res_fg_msk_student.shape[-2:])
+                    
+                    # Create binary masks with thresholding
+                    binary_fg_msk_teacher = (res_fg_msk_teacher_flat > 0.5).float()
+                    binary_fg_msk_student = (res_fg_msk_student_flat > 0.5).float()
+                    
+                    # Generate comprehensive contrastive learning analysis
+                    viz_files = visualizer.visualize_contrastive_analysis(
+                        teacher_features=supp_fts_teacher_flat,
+                        student_features=supp_fts_student_flat,
+                        teacher_masks=binary_fg_msk_teacher,
+                        student_masks=binary_fg_msk_student,
+                        organ_classes=organ_classes_flat,
+                        title=f"Contrastive Analysis - Epoch {sub_epoch}, Step {i_iter+1}"
+                    )
+                    
+                    print(f'Organ contrastive analysis saved for iteration {i_iter+1}')
+                    print(f'   t-SNE: {viz_files["tsne"]}')
+                    print(f'   Similarity Matrix: {viz_files["similarity"]}')
+                    if viz_files["feature_maps"]:
+                        print(f'   Feature Maps: {viz_files["feature_maps"]}')
+                    
+                except Exception as e:
+                    print(f'Organ visualization failed: {e}')
+                    import traceback
+                    traceback.print_exc()
+                    # Continue training even if visualization fails

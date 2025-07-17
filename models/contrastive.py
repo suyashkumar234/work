@@ -1,0 +1,146 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SupervisedPixelWiseContrastiveLoss(nn.Module):
+    """
+    Supervised pixel-wise InfoNCE contrastive loss for teacher-student learning.
+    Uses binary masks (0/1) with organ class information to create positive pairs 
+    (same organ class) and negative pairs (foreground vs background).
+    
+    Args:
+        temperature: Temperature parameter for contrastive learning
+        num_negatives: Number of negative samples per positive pair
+    """
+    def __init__(self, temperature=0.1, num_negatives=1000):
+        super(SupervisedPixelWiseContrastiveLoss, self).__init__()
+        self.temperature = temperature
+        self.num_negatives = num_negatives
+
+    def forward(self, feat_teacher, feat_student, mask_teacher, mask_student, organ_class_teacher, organ_class_student):
+        """
+        Args:
+            feat_teacher: (B, C, H, W) feature map from teacher encoder
+            feat_student: (B, C, H, W) feature map from student encoder  
+            mask_teacher: (B, H, W) binary mask for teacher (0=bg, 1=fg)
+            mask_student: (B, H, W) binary mask for student (0=bg, 1=fg)
+            organ_class_teacher: (B,) organ class ID for teacher mask
+            organ_class_student: (B,) organ class ID for student mask
+                                                                                                                                                                                                                                     vgcfxw
+            loss: scalar InfoNCE contrastive loss
+        """
+        B, C, H, W = feat_teacher.shape
+        #print(organ_class_teacher[0], organ_class_student[0])
+        # Normalize features
+        feat_teacher = F.normalize(feat_teacher, dim=1)
+        feat_student = F.normalize(feat_student, dim=1)
+        
+        # Reshape features to (B*H*W, C)
+        feat_teacher_flat = feat_teacher.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+        feat_student_flat = feat_student.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+        
+        # Reshape masks to (B*H*W,)
+        mask_teacher_flat = mask_teacher.reshape(-1)  # (B*H*W,)
+        mask_student_flat = mask_student.reshape(-1)  # (B*H*W,)
+        
+        # Find foreground pixels (mask == 1)
+        fg_teacher = mask_teacher_flat == 1
+        fg_student = mask_student_flat == 1
+        
+        # Find background pixels (mask == 0)
+        bg_teacher = mask_teacher_flat == 0
+        bg_student = mask_student_flat == 0
+        
+        # Get foreground features
+        fg_feat_teacher = feat_teacher_flat[fg_teacher]  # (N_fg_teacher, C)
+        fg_feat_student = feat_student_flat[fg_student]  # (N_fg_student, C)
+        
+        # Get background features
+        bg_feat_teacher = feat_teacher_flat[bg_teacher]  # (N_bg_teacher, C)
+        bg_feat_student = feat_student_flat[bg_student]  # (N_bg_student, C)
+        
+        # Check if we have enough foreground and background pixels
+        if fg_feat_teacher.shape[0] < 10 or fg_feat_student.shape[0] < 10:
+            return torch.tensor(0.0, device=feat_teacher.device, requires_grad=True)
+        
+        if bg_feat_teacher.shape[0] < 10 or bg_feat_student.shape[0] < 10:
+            return torch.tensor(0.0, device=feat_teacher.device, requires_grad=True)
+        
+        # Check if both masks are for the same organ class (positive pairs)
+        same_organ = (organ_class_teacher == organ_class_student).all()
+        
+        if not same_organ:
+            # Different organs - no positive pairs, return small loss to encourage separation
+            return torch.tensor(0.1, device=feat_teacher.device, requires_grad=True)
+        
+        # Sample negative features (background features)
+        num_neg = min(self.num_negatives, bg_feat_teacher.shape[0], bg_feat_student.shape[0])
+        if num_neg > 0:
+            neg_feat_teacher = bg_feat_teacher[:num_neg]  # (num_neg, C)
+            neg_feat_student = bg_feat_student[:num_neg]  # (num_neg, C)
+        else:
+            # If no background pixels, use random features as negatives
+            neg_feat_teacher = torch.randn_like(fg_feat_teacher[:min(100, fg_feat_teacher.shape[0])])
+            neg_feat_student = torch.randn_like(fg_feat_student[:min(100, fg_feat_student.shape[0])])
+        
+        # InfoNCE Loss Implementation
+        # Positive pairs: teacher foreground <-> student foreground (same organ)
+        # Negative pairs: teacher foreground <-> background features
+        
+        # Compute positive similarities
+        pos_sim = torch.mm(fg_feat_teacher, fg_feat_student.t()) / self.temperature  # (N_fg_teacher, N_fg_student)
+        
+        # Compute negative similarities (teacher foreground vs background)
+        neg_sim_teacher = torch.mm(fg_feat_teacher, neg_feat_teacher.t()) / self.temperature  # (N_fg_teacher, num_neg)
+        
+        # For InfoNCE, create similarity matrix where each row represents
+        # one positive pair and multiple negative pairs
+        logits_teacher = torch.cat([pos_sim, neg_sim_teacher], dim=1)  # (N_fg_teacher, N_fg_student + num_neg)
+        
+        # Create labels for InfoNCE (the positive pair index for each row)
+        # For each teacher foreground pixel, find its corresponding student foreground pixel
+        labels_teacher = torch.arange(min(fg_feat_teacher.shape[0], fg_feat_student.shape[0]), 
+                                    device=feat_teacher.device)
+        
+        # If we have more teacher foreground pixels than student, truncate
+        if fg_feat_teacher.shape[0] > fg_feat_student.shape[0]:
+            logits_teacher = logits_teacher[:fg_feat_student.shape[0]]
+        
+        # Compute InfoNCE loss for teacher->student direction
+        loss_teacher = F.cross_entropy(logits_teacher, labels_teacher)
+        
+        # Compute InfoNCE loss for student->teacher direction (symmetric)
+        neg_sim_student = torch.mm(fg_feat_student, neg_feat_student.t()) / self.temperature  # (N_fg_student, num_neg)
+        logits_student = torch.cat([pos_sim.t(), neg_sim_student], dim=1)  # (N_fg_student, N_fg_teacher + num_neg)
+        labels_student = torch.arange(min(fg_feat_student.shape[0], fg_feat_teacher.shape[0]), 
+                                    device=feat_teacher.device)
+        
+        if fg_feat_student.shape[0] > fg_feat_teacher.shape[0]:
+            logits_student = logits_student[:fg_feat_teacher.shape[0]]
+        
+        loss_student = F.cross_entropy(logits_student, labels_student)
+        
+        # Return average of both directions
+        return (loss_teacher + loss_student) / 2
+
+class ContrastiveLoss(nn.Module):
+    """
+    Legacy contrastive loss - kept for backward compatibility
+    """
+    def __init__(self, temperature=0.5):
+        super(ContrastiveLoss, self).__init__()
+        self.temperature = temperature
+        self.supervised_loss = SupervisedPixelWiseContrastiveLoss(temperature=temperature)
+
+    def forward(self, feature_teacher, feature_student, mask_teacher, mask_student, organ_class_teacher=None, organ_class_student=None):
+        """
+        Wrapper for supervised contrastive loss
+        """
+        # If organ class information is not provided, assume same organ
+        if organ_class_teacher is None:
+            organ_class_teacher = torch.ones(feature_teacher.shape[0], device=feature_teacher.device)
+        if organ_class_student is None:
+            organ_class_student = torch.ones(feature_student.shape[0], device=feature_student.device)
+            
+        return self.supervised_loss(feature_teacher, feature_student, mask_teacher, mask_student, 
+                                  organ_class_teacher, organ_class_student)

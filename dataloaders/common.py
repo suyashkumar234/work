@@ -111,10 +111,10 @@ class ReloadPairedDataset(Dataset):
                  pair_based_transforms=None):
         super().__init__()
         self.datasets = datasets
-        self.n_datasets = len(self.datasets)
-        self.n_data = [len(dataset) for dataset in self.datasets]
+        self.n_datasets = len(self.datasets) # list of datasets
+        self.n_data = [len(dataset) for dataset in self.datasets] # length of each dataset
         self.n_elements = n_elements
-        self.curr_max_iters = curr_max_iters
+        self.curr_max_iters = curr_max_iters # number of pairs in an epoch
         self.pair_based_transforms = pair_based_transforms
         self.update_index()
 
@@ -166,7 +166,7 @@ class Subset(Dataset):
     """
     def __init__(self, dataset, indices, sub_attrib_args=None):
         self.dataset = dataset
-        self.indices = indices
+        self.indices = indices # indices of samples of the current class in the entire dataset
         self.sub_attrib_args = sub_attrib_args
 
     def __getitem__(self, idx):
