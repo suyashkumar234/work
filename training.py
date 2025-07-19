@@ -91,61 +91,14 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
     _log.info(f'###### Labels excluded in training : {[lb for lb in _config["exclude_cls_list"]]} ######')
     _log.info(f'###### Unseen labels evaluated in testing: {[lb for lb in test_labels]} ######')
      # Create training dataset
+
+    # Filter act_labels to exclude excluded classes
+    all_labels = list(DATASET_INFO[baseset_name]['LABEL_GROUP']['pa_all'])
+    #print(all_labels)
+    excluded = _config["exclude_cls_list"]
+    act_labels = [lbl for lbl in all_labels if lbl not in excluded]
+    print(act_labels)
     
-    
-    # dataset, tr_parent = med_fewshot(
-    #     dataset_name=baseset_name,
-    #     base_dir=_config['path'][data_name]['data_dir'],
-    #     idx_split=_config['eval_fold'],
-    #     mode='train',
-    #     scan_per_load=_config['scan_per_load'],
-    #     transforms=tr_transforms,
-    #     act_labels=DATASET_INFO[baseset_name]['LABEL_GROUP']['pa_all'],
-    #     n_ways=1,
-    #     n_shots=1,
-    #     nsup=_config['task']['n_shots'],
-    #     fix_parent_len=_config["max_iters_per_load"] if _config['fix_length'] else None,
-    #     max_iters_per_load=_config["max_iters_per_load"],
-    #     min_fg=str(_config["min_fg_data"]),
-    #     n_queries=1,
-    #     exclude_list=_config["exclude_cls_list"],
-    #     dataset_config=_config['DATASET_CONFIG'],
-    #     client_eval=True if _config.get('client_eval', False) else False
-    # )
-    # dataset.norm_func = tr_parent.norm_func
-
-    # # Create training dataloader
-    # trainloader = DataLoader(
-    #     dataset,
-    #     batch_size=_config['batch_size'],
-    #     shuffle=True,
-    #     num_workers=_config['num_workers'],
-    #     pin_memory=True,
-    #     drop_last=True
-    # )
-    # when doing ssl we use the superpixel dataset,Raw Data → Dataset → DataLoader → Model → Loss → Optimizer → Backprop
-    # tr_parent = SuperpixelDataset( # base dataset
-    #     which_dataset = baseset_name,
-    #     base_dir=_config['path'][data_name]['data_dir'],
-    #     idx_split = _config['eval_fold'], # current fold- idx_split 
-    #     mode='train',
-    #     min_fg=str(_config["min_fg_data"]), # dummy entry for superpixel dataset
-    #     transforms =tr_transforms, # data augmentation
-    #     transform_param_limits = myaug.augs[_config['which_aug']],#tr_transforms # data augmentation parameters- passing the parameter limits to the data augmentation function
-    #     nsup = _config['task']['n_shots'], # number of support images
-    #     scan_per_load = _config['scan_per_load'], # number of images to load at a time
-    #     exclude_list = _config["exclude_cls_list"], # labels excluded in training
-    #     superpix_scale = _config["superpix_scale"], # size of superpixels
-    #     fix_length = _config["max_iters_per_load"] if (data_name == 'C0_Superpix') or (data_name == 'CHAOST2_Superpix') else None, # if the dataset is C0, CHAOST2, or SABS, then we fix the length of the dataset to the number of images in the dataset     
-    #     dataset_config = _config['DATASET_CONFIG']  # dataset configuration
-    # )
-
-# iteration: One batch of data processed (forward + backward pass).
-# Load: A group of iterations, using a subset of the dataset loaded into memory at once.
-
-    # print("About to print tr_parent", flush=True)
-    # print(tr_parent, flush=True) # <dataloaders.GenericSuperDatasetv2.SuperpixelDataset object at 0x15a06ff20>
-    # print("Printed tr_parent", flush=True)
     dataset, tr_parent = med_fewshot(
         dataset_name=baseset_name,
         base_dir=_config['path'][data_name]['data_dir'],
@@ -153,7 +106,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         mode='train',
         scan_per_load=_config['scan_per_load'],
         transforms=tr_transforms,
-        act_labels=DATASET_INFO[baseset_name]['LABEL_GROUP']['pa_all'],
+        act_labels=act_labels,
         n_ways=1,
         n_shots=1,
         nsup=_config['task']['n_shots'],
@@ -161,10 +114,11 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         max_iters_per_load=_config["max_iters_per_load"],
         min_fg=str(_config["min_fg_data"]),
         n_queries=1,
-        exclude_list=_config["exclude_cls_list"],
+        exclude_list=excluded,
         dataset_config=_config['DATASET_CONFIG'],
         client_eval=True if _config.get('client_eval', False) else False
     )
+    #print(act_labels, excluded)
     dataset.norm_func = tr_parent.norm_func
     print("Dataset length:", len(dataset))   
 
@@ -210,6 +164,18 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 
     log_loss = {'loss': 0, 'align_loss': 0, 'contrastive_loss': 0} 
 
+    # --- Buffers for accumulating features for liver (6) and spleen (1) ---
+    buffer_teacher_features = []
+    buffer_student_features = []
+    buffer_teacher_masks = []
+    buffer_student_masks = []
+    buffer_organ_classes = []
+    # Generalize: all SABS organs except kidneys (2, 3)
+    #from dataloaders.dataset_utils import DATASET_INFO
+    sabs_label_indices = list(range(1, len(DATASET_INFO[baseset_name]['REAL_LABEL_NAME'])))
+    organs_of_interest = [idx for idx in sabs_label_indices if idx not in (2, 3)]
+    # ---------------------------------------------------------------
+
     _log.info('###### Training ######')
     stime = time.time()
     for sub_epoch in range(n_sub_epoches):
@@ -217,6 +183,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         for _, sample_batched in enumerate(trainloader): # trainloader is the dataloader defined in torch.utils.data , sample_batched is the batch of data
             # Prepare input
             i_iter += 1
+            #print(i_iter)
             # Modified to use device-agnostic approach
             # print("About to print sample_batched", flush=True)
             # print(sample_batched, flush=True) 
@@ -232,7 +199,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
                             for query_image in sample_batched['query_images']]
             query_labels = torch.cat(
                 [query_label.long().to(device) for query_label in sample_batched['query_labels']], dim=0)
-
+            class_ids=  sample_batched['class_ids']
             optimizer.zero_grad()
             # update the student encoder with the teacher encoder using momentum
             model.update_student_encoder(model.student_encoder)
@@ -243,7 +210,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             query_pred, align_loss, debug_vis, assign_mats, contrastive_loss, supp_fts_teacher, supp_fts_student, res_fg_msk_teacher, res_fg_msk_student = model(support_images,
                                                                     support_fg_mask, 
                                                                     support_bg_mask, 
-                                                                    query_images, 
+                                                                    query_images,class_ids, 
                                                                     isval = False, val_wsize = None) # passing the data to the model
             ########################################################################
 
@@ -277,6 +244,30 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             log_loss['align_loss'] += align_loss # align_loss is the loss for the alignment of the support images and the query images
             log_loss['contrastive_loss'] += contrastive_loss # contrastive_loss is the loss for the contrastive loss
 
+            # --- Accumulate features for liver and spleen only ---
+            # Flatten features and masks as in the visualization code
+            supp_fts_teacher_flat = supp_fts_teacher.view(-1, *supp_fts_teacher.shape[-3:])
+            supp_fts_student_flat = supp_fts_student.view(-1, *supp_fts_student.shape[-3:])
+            res_fg_msk_teacher_flat = res_fg_msk_teacher.view(-1, *res_fg_msk_teacher.shape[-2:])
+            res_fg_msk_student_flat = res_fg_msk_student.view(-1, *res_fg_msk_student.shape[-2:])
+            class_ids = sample_batched.get('class_ids', [1])
+            n_ways = len(support_images)
+            n_shots = len(support_images[0])
+            sup_bsize = len(support_images[0][0])
+            organ_classes = torch.zeros(n_ways, n_shots, sup_bsize, device=device)
+            for way in range(n_ways):
+                organ_classes[way, :, :] = class_ids[way]
+            organ_classes_flat = organ_classes.view(-1)
+            # Only keep indices for liver and spleen
+            mask_interest = torch.isin(organ_classes_flat.long(), torch.tensor(organs_of_interest, device=device, dtype=torch.long))
+            if mask_interest.any():
+                buffer_teacher_features.append(supp_fts_teacher_flat[mask_interest])
+                buffer_student_features.append(supp_fts_student_flat[mask_interest])
+                buffer_teacher_masks.append((res_fg_msk_teacher_flat[mask_interest] > 0.5).float())
+                buffer_student_masks.append((res_fg_msk_student_flat[mask_interest] > 0.5).float())
+                buffer_organ_classes.append(organ_classes_flat[mask_interest])
+            # ---------------------------------------------------------------
+
             # print loss and take snapshots
             if (i_iter + 1) % _config['print_interval'] == 0:
 
@@ -309,6 +300,44 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 
                 print(f'step {i_iter+1}: loss: {loss}, align_loss: {align_loss}, contrastive_loss: {contrastive_loss}, time: {(nt-stime)/60} mins')
 
+                # --- Organ visualization every print_interval (250 steps) ---
+                try:
+                    if buffer_teacher_features:
+                        # Concatenate all accumulated features
+                        all_teacher_features = torch.cat(buffer_teacher_features, dim=0)
+                        all_student_features = torch.cat(buffer_student_features, dim=0)
+                        all_teacher_masks = torch.cat(buffer_teacher_masks, dim=0)
+                        all_student_masks = torch.cat(buffer_student_masks, dim=0)
+                        all_organ_classes = torch.cat(buffer_organ_classes, dim=0)
+                        # Debug: print unique organs in buffer
+                        print("Organs in buffer:", torch.unique(all_organ_classes))
+                        # Create organ visualizer
+                        viz_dir = f'{_run.observers[0].dir}/organ_visualizations'
+                        visualizer = create_organ_visualizer(dataset_name=baseset_name, save_dir=viz_dir)
+                        viz_files = visualizer.visualize_contrastive_analysis(
+                            teacher_features=all_teacher_features,
+                            student_features=all_student_features,
+                            teacher_masks=all_teacher_masks,
+                            student_masks=all_student_masks,
+                            organ_classes=all_organ_classes,
+                            title=f"Contrastive Analysis (All Organs Except Kidneys) - Step {i_iter+1}"
+                        )
+                        print(f'Organ contrastive analysis (all except kidneys) saved for iteration {i_iter+1}')
+                        print(f'   t-SNE: {viz_files["tsne"]}')
+                        print(f'   Similarity Matrix: {viz_files["similarity"]}')
+                        if viz_files["feature_maps"]:
+                            print(f'   Feature Maps: {viz_files["feature_maps"]}')
+                        # Clear buffers after visualization
+                        buffer_teacher_features.clear()
+                        buffer_student_features.clear()
+                        buffer_teacher_masks.clear()
+                        buffer_student_masks.clear()
+                        buffer_organ_classes.clear()
+                except Exception as e:
+                    print(f'Organ visualization failed: {e}')
+                    import traceback
+                    traceback.print_exc()
+
             if (i_iter + 1) % _config['save_snapshot_every'] == 0:
                 _log.info('###### Taking snapshot ######')
                 torch.save({'model':model.state_dict(),'opt':optimizer.state_dict(),'sch':scheduler.state_dict()},
@@ -322,64 +351,4 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 
             if (i_iter - 2) > _config['n_steps']:
                 return 1 # finish up
-
-            # Add organ separation visualization every few intervals
-            if (i_iter + 1) % (_config['print_interval'] * 2) == 0:  # Every 8 intervals to avoid too many plots
-                try:
-                    # Create organ visualizer
-                    viz_dir = f'{_run.observers[0].dir}/organ_visualizations'
-                    visualizer = create_organ_visualizer(dataset_name=baseset_name, save_dir=viz_dir)
-                    
-                    # Get organ class information from the dataloader
-                    # The class_ids are available in the sample_batched
-                    class_ids = sample_batched.get('class_ids', [1])  # Default to [1] if not available
-                    
-                    # Create organ class tensors for each sample in the batch
-                    # For 1-way few-shot, each way represents one organ class
-                    n_ways = len(support_images)
-                    n_shots = len(support_images[0])
-                    sup_bsize = len(support_images[0][0])
-                    
-                    # Create organ class tensor: (n_ways, n_shots, sup_bsize)
-                    organ_classes = torch.zeros(n_ways, n_shots, sup_bsize, device=device)
-                    for way in range(n_ways):
-                        organ_classes[way, :, :] = class_ids[way]
-                    
-                    # Reshape to match feature dimensions: (B,)
-                    organ_classes_flat = organ_classes.view(-1)
-                    
-                    # Get features and masks from model output
-                    # supp_fts_teacher shape: (n_ways, n_shots, sup_bsize, C, H, W)
-                    # res_fg_msk_teacher shape: (n_ways, n_shots, sup_bsize, H, W)
-                    
-                    # Reshape to (B, C, H, W) and (B, H, W)
-                    supp_fts_teacher_flat = supp_fts_teacher.view(-1, *supp_fts_teacher.shape[-3:])
-                    supp_fts_student_flat = supp_fts_student.view(-1, *supp_fts_student.shape[-3:])
-                    res_fg_msk_teacher_flat = res_fg_msk_teacher.view(-1, *res_fg_msk_teacher.shape[-2:])
-                    res_fg_msk_student_flat = res_fg_msk_student.view(-1, *res_fg_msk_student.shape[-2:])
-                    
-                    # Create binary masks with thresholding
-                    binary_fg_msk_teacher = (res_fg_msk_teacher_flat > 0.5).float()
-                    binary_fg_msk_student = (res_fg_msk_student_flat > 0.5).float()
-                    
-                    # Generate comprehensive contrastive learning analysis
-                    viz_files = visualizer.visualize_contrastive_analysis(
-                        teacher_features=supp_fts_teacher_flat,
-                        student_features=supp_fts_student_flat,
-                        teacher_masks=binary_fg_msk_teacher,
-                        student_masks=binary_fg_msk_student,
-                        organ_classes=organ_classes_flat,
-                        title=f"Contrastive Analysis - Epoch {sub_epoch}, Step {i_iter+1}"
-                    )
-                    
-                    print(f'Organ contrastive analysis saved for iteration {i_iter+1}')
-                    print(f'   t-SNE: {viz_files["tsne"]}')
-                    print(f'   Similarity Matrix: {viz_files["similarity"]}')
-                    if viz_files["feature_maps"]:
-                        print(f'   Feature Maps: {viz_files["feature_maps"]}')
-                    
-                except Exception as e:
-                    print(f'Organ visualization failed: {e}')
-                    import traceback
-                    traceback.print_exc()
-                    # Continue training even if visualization fails
+            

@@ -15,6 +15,9 @@ from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import DATASET_INFO for label mapping
+from dataloaders.dataset_utils import DATASET_INFO
+
 class OrganContrastiveVisualizer:
     """
     Visualization utility for organ-aware contrastive learning analysis.
@@ -53,22 +56,11 @@ class OrganContrastiveVisualizer:
         }
         
     def _get_organ_mappings(self):
-        """Get organ class mappings for different datasets."""
-        if self.dataset_name == 'SABS':
-            return {
-                0: 'background',
-                1: 'spleen',      # Training
-                6: 'liver'        # Training
-            }
-        elif self.dataset_name == 'CHAOST2':
-            return {
-                0: 'background',
-                1: 'liver',       # Training
-                2: 'kidney',      # Testing (left)
-                3: 'kidney',      # Testing (right)
-                4: 'spleen',      # Training
-                5: 'pancreas'     # Training
-            }
+        """Get organ class mappings for different datasets using DATASET_INFO."""
+        if self.dataset_name in DATASET_INFO:
+            real_label_names = DATASET_INFO[self.dataset_name]['REAL_LABEL_NAME']
+            # Map index to label name, lowercased for color matching
+            return {idx: name.lower() for idx, name in enumerate(real_label_names)}
         else:
             # Default mapping
             return {
@@ -92,7 +84,7 @@ class OrganContrastiveVisualizer:
             student_features: (B, C, H, W) or (N, C) Student feature maps  
             teacher_masks: (B, H, W) or (N,) Teacher binary masks (0/1)
             student_masks: (B, H, W) or (N,) Student binary masks (0/1)
-            organ_classes: (B,) or (N,) Organ class IDs
+            organ_classes: (B,) or (B,1,1) or (B, H, W) Organ class IDs
             title: Plot title
             max_points: Maximum number of points to visualize
             perplexity: t-SNE perplexity parameter
@@ -103,13 +95,32 @@ class OrganContrastiveVisualizer:
             teacher_features = F.normalize(teacher_features, dim=1)
             student_features = F.normalize(student_features, dim=1)
             
+            # Flatten spatial dimensions
+            B, C, H, W = teacher_features.shape
+            teacher_features_flat = teacher_features.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+            student_features_flat = student_features.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+            teacher_masks_flat = teacher_masks.reshape(-1)  # (B*H*W,)
+            student_masks_flat = student_masks.reshape(-1)  # (B*H*W,)
+
+            # Ensure organ_classes is broadcasted to (B, H, W) before flattening
+            if organ_classes.dim() == 1:
+                # (B,) -> (B, H, W)
+                organ_classes_expanded = organ_classes.view(B, 1, 1).expand(B, H, W)
+            elif organ_classes.dim() == 3 and organ_classes.shape[1] == 1 and organ_classes.shape[2] == 1:
+                # (B,1,1) -> (B, H, W)
+                organ_classes_expanded = organ_classes.expand(B, H, W)
+            else:
+                # Already (B, H, W)
+                organ_classes_expanded = organ_classes
+            organ_classes_flat = organ_classes_expanded.reshape(-1)
+            
             # Extract foreground features only
-            teacher_fg = teacher_features[teacher_masks == 1]  # (N_fg, C)
-            student_fg = student_features[student_masks == 1]  # (N_fg, C)
+            teacher_fg = teacher_features_flat[teacher_masks_flat == 1]  # (N_fg, C)
+            student_fg = student_features_flat[student_masks_flat == 1]  # (N_fg, C)
             
             # Get corresponding organ classes for foreground pixels
-            teacher_organs = organ_classes[teacher_masks == 1]
-            student_organs = organ_classes[student_masks == 1]
+            teacher_organs = organ_classes_flat[teacher_masks_flat == 1]
+            student_organs = organ_classes_flat[student_masks_flat == 1]
         else:  # (N, C) - already flattened
             # Normalize features
             teacher_features = F.normalize(teacher_features, dim=1)
@@ -136,24 +147,36 @@ class OrganContrastiveVisualizer:
         # Convert to numpy
         features_np = all_features.detach().cpu().numpy()
         organs_np = all_organs.detach().cpu().numpy()
-        
+
+        # --- Fix: Check sample count and adjust perplexity ---
+        if len(features_np) < 2:
+            print("Not enough samples for t-SNE visualization.")
+            return None
+        adj_perplexity = min(perplexity, max(1, len(features_np) // 3))
+        if len(features_np) < 5:
+            print("Too few samples for meaningful t-SNE, skipping.")
+            return None
         # Apply t-SNE
-        tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42, n_jobs=-1)
+        tsne = TSNE(n_components=2, perplexity=adj_perplexity, random_state=42, n_jobs=-1)
         features_2d = tsne.fit_transform(features_np)
         
         # Create visualization
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
         
-        # Plot 1: Organ-based coloring
-        for organ_id in np.unique(organs_np):
-            if organ_id in self.organ_mappings:
-                organ_name = self.organ_mappings[organ_id]
-                color = self.colors.get(organ_name, self.colors['unknown'])
-                
-                mask = organs_np == organ_id
-                ax1.scatter(features_2d[mask, 0], features_2d[mask, 1], 
-                           c=color, label=organ_name, alpha=0.7, s=20)
+        # --- Use a color map for all organs, fallback if not in self.colors ---
         
+        color_map = plt.get_cmap('tab20')
+        unique_organs = np.unique(organs_np)
+        organ_color_dict = {}
+        for i, organ_id in enumerate(unique_organs):
+            organ_name = self.organ_mappings.get(organ_id, f'Organ_{organ_id}')
+            # Use predefined color if available, else assign from color map
+            color = self.colors.get(organ_name, color_map(i % 20))
+            organ_color_dict[organ_id] = color
+            mask = organs_np == organ_id
+            ax1.scatter(features_2d[mask, 0], features_2d[mask, 1], 
+                       c=[color], label=organ_name, alpha=0.7, s=20)
+
         ax1.set_title(f"{title} - Organ Classes")
         ax1.set_xlabel("t-SNE 1")
         ax1.set_ylabel("t-SNE 2")
@@ -210,13 +233,29 @@ class OrganContrastiveVisualizer:
             teacher_features = F.normalize(teacher_features, dim=1)
             student_features = F.normalize(student_features, dim=1)
             
+            # Flatten spatial dimensions
+            B, C, H, W = teacher_features.shape
+            teacher_features_flat = teacher_features.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+            student_features_flat = student_features.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+            teacher_masks_flat = teacher_masks.reshape(-1)  # (B*H*W,)
+            student_masks_flat = student_masks.reshape(-1)  # (B*H*W,)
+
+            # Ensure organ_classes is broadcasted to (B, H, W) before flattening
+            if organ_classes.dim() == 1:
+                organ_classes_expanded = organ_classes.view(B, 1, 1).expand(B, H, W)
+            elif organ_classes.dim() == 3 and organ_classes.shape[1] == 1 and organ_classes.shape[2] == 1:
+                organ_classes_expanded = organ_classes.expand(B, H, W)
+            else:
+                organ_classes_expanded = organ_classes
+            organ_classes_flat = organ_classes_expanded.reshape(-1)
+            
             # Extract foreground features
-            teacher_fg = teacher_features[teacher_masks == 1]  # (N_fg, C)
-            student_fg = student_features[student_masks == 1]  # (N_fg, C)
+            teacher_fg = teacher_features_flat[teacher_masks_flat == 1]  # (N_fg, C)
+            student_fg = student_features_flat[student_masks_flat == 1]  # (N_fg, C)
             
             # Get organ classes for foreground pixels
-            teacher_organs = organ_classes[teacher_masks == 1]
-            student_organs = organ_classes[student_masks == 1]
+            teacher_organs = organ_classes_flat[teacher_masks_flat == 1]
+            student_organs = organ_classes_flat[student_masks_flat == 1]
         else:  # (N, C) - already flattened
             # Normalize features
             teacher_features = F.normalize(teacher_features, dim=1)
@@ -423,6 +462,66 @@ class OrganContrastiveVisualizer:
             'similarity': sim_file,
             'feature_maps': feat_file
         }
+
+    def visualize_multi_class_clusters(self, feature_tuples, title="t-SNE Multi-Organ Clusters", max_points=5000, perplexity=30):
+        """
+        Visualize clustering of multiple organs in feature space using t-SNE.
+        Args:
+            feature_tuples: List of tuples (features, masks, organ_class_id), one per organ.
+                features: (B, C, H, W) or (N, C)
+                masks: (B, H, W) or (N,)
+                organ_class_id: int or str (label for this organ)
+            title: Plot title
+            max_points: Maximum number of points to visualize
+            perplexity: t-SNE perplexity parameter
+        """
+        all_features = []
+        all_organs = []
+        for features, masks, organ_class_id in feature_tuples:
+            if features.dim() == 4:
+                B, C, H, W = features.shape
+                features_flat = features.permute(0, 2, 3, 1).reshape(-1, C)
+                masks_flat = masks.reshape(-1)
+            else:
+                features_flat = features
+                masks_flat = masks
+            fg_features = features_flat[masks_flat == 1]
+            fg_labels = torch.full((fg_features.shape[0],), organ_class_id, dtype=torch.long, device=features.device)
+            all_features.append(fg_features)
+            all_organs.append(fg_labels)
+        if not all_features:
+            print("No features to visualize.")
+            return None
+        all_features = torch.cat(all_features, dim=0)
+        all_organs = torch.cat(all_organs, dim=0)
+        # Downsample if too many points
+        if len(all_features) > max_points:
+            indices = torch.randperm(len(all_features))[:max_points]
+            all_features = all_features[indices]
+            all_organs = all_organs[indices]
+        # t-SNE
+        features_np = all_features.detach().cpu().numpy()
+        organs_np = all_organs.detach().cpu().numpy()
+        tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42, n_jobs=-1)
+        features_2d = tsne.fit_transform(features_np)
+        # Plot
+        plt.figure(figsize=(12, 8))
+        for organ_id in np.unique(organs_np):
+            organ_name = self.organ_mappings.get(organ_id, f'Organ_{organ_id}')
+            color = self.colors.get(organ_name, self.colors['unknown'])
+            mask = organs_np == organ_id
+            plt.scatter(features_2d[mask, 0], features_2d[mask, 1], c=color, label=organ_name, alpha=0.7, s=20)
+        plt.title(title)
+        plt.xlabel("t-SNE 1")
+        plt.ylabel("t-SNE 2")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"tsne_multi_organ_{self.dataset_name}_{timestamp}.png"
+        plt.savefig(os.path.join(self.save_dir, filename), dpi=300, bbox_inches='tight')
+        plt.show()
+        return filename
 
 def create_organ_visualizer(dataset_name='SABS', save_dir='visualizations'):
     """

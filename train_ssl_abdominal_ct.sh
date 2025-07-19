@@ -21,13 +21,13 @@ EXCLU='[2,3]' # setting 2: excluding kidneies in training set to test generaliza
 # EXCLU='[1,6]' 
 
 ###### Training configs ######
-NSTEP=100100 # set to 500 for debugging and learning code original 50050
+NSTEP=1000 # reduced for fast debugging
 DECAY=0.95
 # num_epochs = total_iterations / (num_samples / batch_size)
-MAX_ITER=1000 # it is the maximum number of iterations to run before reloading or refreshing the data
+MAX_ITER=100 # reduced for fast debugging
 # if batch size = 1, then 500 samples for 500 iterations; if batch size = 4, then 2000 samples for 500 iterations
 # set to 5 for debugging and learning code original 1000 
-SNAPSHOT_INTERVAL=500 # interval for saving snapshot
+SNAPSHOT_INTERVAL=10 # interval for saving snapshot
 SEED='1234'
 
 ###### Validation configs ######
