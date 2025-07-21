@@ -34,7 +34,7 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
         # Normalize features
         feat_teacher = F.normalize(feat_teacher, dim=1)
         feat_student = F.normalize(feat_student, dim=1)
-        
+        #print(organ_class_teacher, organ_class_student)
         # Reshape features to (B*H*W, C)
         feat_teacher_flat = feat_teacher.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
         feat_student_flat = feat_student.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
@@ -60,10 +60,10 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
         bg_feat_student = feat_student_flat[bg_student]  # (N_bg_student, C)
         
         # Check if we have enough foreground and background pixels
-        if fg_feat_teacher.shape[0] < 10 or fg_feat_student.shape[0] < 10:
+        if fg_feat_teacher.shape[0] < 1 or fg_feat_student.shape[0] < 1:
             return torch.tensor(0.0, device=feat_teacher.device, requires_grad=True)
         
-        if bg_feat_teacher.shape[0] < 10 or bg_feat_student.shape[0] < 10:
+        if bg_feat_teacher.shape[0] < 1 or bg_feat_student.shape[0] < 1:
             return torch.tensor(0.0, device=feat_teacher.device, requires_grad=True)
         
         # Check if both masks are for the same organ class (positive pairs)
@@ -80,48 +80,63 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
             neg_feat_student = bg_feat_student[:num_neg]  # (num_neg, C)
         else:
             # If no background pixels, use random features as negatives
-            neg_feat_teacher = torch.randn_like(fg_feat_teacher[:min(100, fg_feat_teacher.shape[0])])
-            neg_feat_student = torch.randn_like(fg_feat_student[:min(100, fg_feat_student.shape[0])])
-        
+            return torch.tensor(0.1, device=feat_teacher.device, requires_grad=True)
+            # neg_feat_teacher = torch.randn_like(fg_feat_teacher[:min(100, fg_feat_teacher.shape[0])])
+            # neg_feat_student = torch.randn_like(fg_feat_student[:min(100, fg_feat_student.shape[0])])
+
         # InfoNCE Loss Implementation
         # Positive pairs: teacher foreground <-> student foreground (same organ)
-        # Negative pairs: teacher foreground <-> background features
-        
+        # Negative pairs: teacher foreground <-> student background features
+        #                 teacher background <-> student background features (bg-bg negative pairing)
+
         # Compute positive similarities
         pos_sim = torch.mm(fg_feat_teacher, fg_feat_student.t()) / self.temperature  # (N_fg_teacher, N_fg_student)
-        
-        # Compute negative similarities (teacher foreground vs background)
-        neg_sim_teacher = torch.mm(fg_feat_teacher, neg_feat_teacher.t()) / self.temperature  # (N_fg_teacher, num_neg)
-        
+
+        # Compute negative similarities (teacher foreground vs student background)
+        neg_sim_teacher = torch.mm(fg_feat_teacher, neg_feat_student.t()) / self.temperature  # (N_fg_teacher, num_neg)
+        # Compute negative similarities (teacher background vs student background)
+        neg_sim_bg_teacher = torch.mm(neg_feat_teacher, neg_feat_student.t()) / self.temperature  # (num_neg, num_neg)
+
         # For InfoNCE, create similarity matrix where each row represents
         # one positive pair and multiple negative pairs
         logits_teacher = torch.cat([pos_sim, neg_sim_teacher], dim=1)  # (N_fg_teacher, N_fg_student + num_neg)
-        
+        # Optionally, you can also include bg-bg negatives in the loss if you want to penalize background similarity
+        # For now, we keep them separate for clarity
+
         # Create labels for InfoNCE (the positive pair index for each row)
-        # For each teacher foreground pixel, find its corresponding student foreground pixel
         labels_teacher = torch.arange(min(fg_feat_teacher.shape[0], fg_feat_student.shape[0]), 
                                     device=feat_teacher.device)
-        
+
         # If we have more teacher foreground pixels than student, truncate
         if fg_feat_teacher.shape[0] > fg_feat_student.shape[0]:
             logits_teacher = logits_teacher[:fg_feat_student.shape[0]]
-        
+
         # Compute InfoNCE loss for teacher->student direction
         loss_teacher = F.cross_entropy(logits_teacher, labels_teacher)
-        
+
         # Compute InfoNCE loss for student->teacher direction (symmetric)
-        neg_sim_student = torch.mm(fg_feat_student, neg_feat_student.t()) / self.temperature  # (N_fg_student, num_neg)
+        neg_sim_student = torch.mm(fg_feat_student, neg_feat_teacher.t()) / self.temperature  # (N_fg_student, num_neg)
         logits_student = torch.cat([pos_sim.t(), neg_sim_student], dim=1)  # (N_fg_student, N_fg_teacher + num_neg)
         labels_student = torch.arange(min(fg_feat_student.shape[0], fg_feat_teacher.shape[0]), 
                                     device=feat_teacher.device)
-        
+
         if fg_feat_student.shape[0] > fg_feat_teacher.shape[0]:
             logits_student = logits_student[:fg_feat_teacher.shape[0]]
-        
+
         loss_student = F.cross_entropy(logits_student, labels_student)
-        
-        # Return average of both directions
-        return (loss_teacher + loss_student) / 2
+
+        # Background-background negative pairing loss (optional, can be weighted)
+        # Encourage background features to be dissimilar between teacher and student
+        # Here, we use InfoNCE-style loss for bg-bg as well
+        if num_neg > 1:
+            # For bg-bg, treat each teacher bg as anchor, student bg as positives (diagonal), rest as negatives
+            bg_labels = torch.arange(num_neg, device=feat_teacher.device)
+            loss_bg = F.cross_entropy(neg_sim_bg_teacher, bg_labels)
+        else:
+            loss_bg = torch.tensor(0.0, device=feat_teacher.device, requires_grad=True)
+
+        # Return average of all three losses (can be weighted if desired)
+        return (loss_teacher + loss_student + loss_bg) / 3
 
 class ContrastiveLoss(nn.Module):
     """
@@ -137,6 +152,7 @@ class ContrastiveLoss(nn.Module):
         Wrapper for supervised contrastive loss
         """
         # If organ class information is not provided, assume same organ
+        #print(organ_class_teacher, organ_class_student)
         if organ_class_teacher is None:
             organ_class_teacher = torch.ones(feature_teacher.shape[0], device=feature_teacher.device)
         if organ_class_student is None:
