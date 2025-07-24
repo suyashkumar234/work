@@ -1,13 +1,13 @@
 #!/bin/bash
-# train a model to segment abdominal CT 
+# train a model to segment abdominal MRI (T2 fold of CHAOS challenge)
 GPUID1=0
 export CUDA_VISIBLE_DEVICES=$GPUID1
 
-####### Shared configs ######
+####### Shared configs
 PROTO_GRID=8 # using 32 / 8 = 4, 4-by-4 prototype pooling window during training
-CPT="myexp"
-DATASET='SABS_Superpix'
-NWORKER=4
+CPT="myexperiments"
+DATASET='CHAOST2_Superpix'
+NWORKER=0
 
 ALL_EV=( 0) # 5-fold cross validation (0, 1, 2, 3, 4)
 ALL_SCALE=( "MIDDLE") # config of pseudolabels
@@ -18,7 +18,7 @@ EXCLU='[2,3]' # setting 2: excluding kidneies in training set to test generaliza
 
 ### Use Liver and spleen as testing classes
 # LABEL_SETS=1 
-# EXCLU='[1,6]' 
+# EXCLU='[1,4]' 
 
 ###### Training configs ######
 NSTEP=100100
@@ -29,7 +29,7 @@ SNAPSHOT_INTERVAL=25000 # interval for saving snapshot
 SEED='1234'
 
 ###### Validation configs ######
-SUPP_ID='[6]' # using the additionally loaded scan as support
+SUPP_ID='[4]' #  # using the additionally loaded scan as support
 
 echo ===================================
 
@@ -46,7 +46,7 @@ do
         mkdir $LOGDIR
     fi
 
-    python3 training.py with \
+    python training.py with \
     'modelname=dlfcn_res101' \
     'usealign=True' \
     'optim_type=sgd' \

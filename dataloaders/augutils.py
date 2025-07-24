@@ -42,10 +42,11 @@ augs = {
     'sabs_aug': sabs_aug,
     'aug_v3': sabs_augv3, # more aggresive
 }
-
-
 def get_geometric_transformer(aug, order=3):
-    """order: interpolation degree. Select order=0 for augmenting segmentation """
+    """
+    Fixed version that properly handles RandomAffine and ElasticTransform
+    order: interpolation degree. Select order=0 for augmenting segmentation 
+    """
     affine     = aug['aug'].get('affine', 0)
     alpha      = aug['aug'].get('elastic',{'alpha': 0})['alpha']
     sigma      = aug['aug'].get('elastic',{'sigma': 0})['sigma']
@@ -56,17 +57,76 @@ def get_geometric_transformer(aug, order=3):
     #     tfx.append(myit.RandomFlip3D(**flip))
 
     if 'affine' in aug['aug']:
-        tfx.append(myit.RandomAffine(affine.get('rotate'),
-                                     affine.get('shift'),
-                                     affine.get('shear'),
-                                     affine.get('scale'),
-                                     affine.get('scale_iso',True),
-                                     order=order))
+        # Create a wrapper class that handles the M parameter automatically
+        class FixedRandomAffine:
+            def __init__(self, rotate, shift, shear, scale, scale_iso, order):
+                self.random_affine = myit.RandomAffine(
+                    rotation_range=rotate,
+                    translation_range=shift,
+                    shear_range=shear,
+                    zoom_range=scale,
+                    zoom_keep_aspect=scale_iso,
+                    order=order
+                )
+            
+            def __call__(self, image):
+                # Generate the transformation matrix automatically
+                M = self.random_affine.build_M(image.shape[:2])
+                # Apply the transform with the matrix
+                return self.random_affine(image, M)
+        
+        tfx.append(FixedRandomAffine(
+            rotate=affine.get('rotate'),
+            shift=affine.get('shift'),
+            shear=affine.get('shear'),
+            scale=affine.get('scale'),
+            scale_iso=affine.get('scale_iso', True),
+            order=order
+        ))
 
     if 'elastic' in aug['aug']:
-        tfx.append(myit.ElasticTransform(alpha, sigma))
+        # Create a wrapper for ElasticTransform that only returns the image
+        class FixedElasticTransform:
+            def __init__(self, alpha, sigma):
+                self.elastic = myit.ElasticTransform(alpha, sigma)
+            
+            def __call__(self, image):
+                # ElasticTransform returns (image, dx_params, dy_params)
+                # We only want the image for the augutils version
+                result = self.elastic(image)
+                if isinstance(result, tuple):
+                    return result[0]  # Return only the transformed image
+                else:
+                    return result
+        
+        tfx.append(FixedElasticTransform(alpha, sigma))
+    
     input_transform = deftfx.Compose(tfx)
     return input_transform
+
+# def get_geometric_transformer(aug, order=3):
+#     """order: interpolation degree. Select order=0 for augmenting segmentation """
+#     affine     = aug['aug'].get('affine', 0)
+#     alpha      = aug['aug'].get('elastic',{'alpha': 0})['alpha']
+#     sigma      = aug['aug'].get('elastic',{'sigma': 0})['sigma']
+#     # flip       = aug['aug'].get('flip', {'v': True, 'h': True, 't': True, 'p':0.125})
+
+#     tfx = []
+#     # if 'flip' in aug['aug']:
+#     #     tfx.append(myit.RandomFlip3D(**flip))
+
+#     if 'affine' in aug['aug']:
+#         tfx.append(myit.RandomAffine(affine.get('rotate'),
+#                                      affine.get('shift'),
+#                                      affine.get('shear'),
+#                                      affine.get('scale'),
+#                                      affine.get('scale_iso',True),
+#                                      order=order))
+
+#     if 'elastic' in aug['aug']:
+#         tfx.append(myit.ElasticTransform(alpha, sigma))
+#     input_transform = deftfx.Compose(tfx)
+#     return input_transform
 
 def get_intensity_transformer(aug):
     """some basic intensity transforms"""

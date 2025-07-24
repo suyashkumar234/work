@@ -140,6 +140,14 @@ class ReloadPairedDataset(Dataset):
                                 for dataset_idx in random.sample(range(self.n_datasets),
                                                                 k=n_elements)]
                             for i in range(curr_max_iters)]
+    def reload_buffer(self):
+        """
+        Reload buffers for all underlying datasets that have this method
+        """
+        for dataset in self.datasets:
+            if hasattr(dataset, 'reload_buffer'):
+                dataset.reload_buffer()
+        self.update_index()
 
     def __len__(self):
         return self.curr_max_iters

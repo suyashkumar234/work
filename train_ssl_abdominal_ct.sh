@@ -1,5 +1,5 @@
 #!/bin/bash
-# train a model to segment abdominal CT
+# train a model to segment abdominal CT 
 GPUID1=0
 export CUDA_VISIBLE_DEVICES=$GPUID1
 
@@ -7,7 +7,7 @@ export CUDA_VISIBLE_DEVICES=$GPUID1
 PROTO_GRID=8 # using 32 / 8 = 4, 4-by-4 prototype pooling window during training
 CPT="myexp"
 DATASET='SABS_Superpix'
-NWORKER=4
+NWORKER=0
 
 ALL_EV=( 0) # 5-fold cross validation (0, 1, 2, 3, 4)
 ALL_SCALE=( "MIDDLE") # config of pseudolabels
@@ -20,12 +20,12 @@ EXCLU='[2,3]' # setting 2: excluding kidneies in training set to test generaliza
 # LABEL_SETS=1 
 # EXCLU='[1,6]' 
 
-###### Training configs (irrelavent in testing) ######
+###### Training configs ######
 NSTEP=100100
 DECAY=0.95
 
 MAX_ITER=1000 # defines the size of an epoch
-SNAPSHOT_INTERVAL=25000 # interval for saving snapshot
+SNAPSHOT_INTERVAL=5000 # interval for saving snapshot
 SEED='1234'
 
 ###### Validation configs ######
@@ -37,22 +37,19 @@ for EVAL_FOLD in "${ALL_EV[@]}"
 do
     for SUPERPIX_SCALE in "${ALL_SCALE[@]}"
     do
-    PREFIX="test_vfold${EVAL_FOLD}"
+    PREFIX="train_${DATASET}_lbgroup${LABEL_SETS}_scale_${SUPERPIX_SCALE}_vfold${EVAL_FOLD}"
     echo $PREFIX
-    LOGDIR="./exps/${CPT}"
+    LOGDIR="./exps/${CPT}_${SUPERPIX_SCALE}_${LABEL_SETS}"
 
     if [ ! -d $LOGDIR ]
     then
         mkdir $LOGDIR
     fi
 
-    RELOAD_PATH='please feed the path to the trained weights here' # path to the reloaded model
-
-    python3 validation.py with \
+    python training.py with \
     'modelname=dlfcn_res101' \
     'usealign=True' \
     'optim_type=sgd' \
-    reload_model_path=$RELOAD_PATH \
     num_workers=$NWORKER \
     scan_per_load=-1 \
     label_sets=$LABEL_SETS \

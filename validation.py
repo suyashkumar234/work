@@ -14,12 +14,14 @@ import numpy as np
 
 from models.grid_proto_fewshot import FewShotSeg
 
-from dataloaders.dev_customized_medv1 import med_fewshot_val
-from dataloaders.ManualAnnoDatasetv1 import ManualAnnoDataset
-from dataloaders.GenericSuperDatasetv1 import SuperpixelDataset
+from dataloaders.dev_customized_med import med_fewshot_val
+from models.grid_proto_fewshot import FewShotSeg
+from dataloaders.ManualAnnoDatasetv2 import ManualAnnoDataset
+from dataloaders.GenericSuperDatasetv2 import SuperpixelDataset
 from dataloaders.dataset_utils import DATASET_INFO, get_normalize_op
 from dataloaders.niftiio import convert_to_sitk
-
+import dataloaders.augutils as myaug
+ 
 from util.metric import Metric
 
 from config_ssl_upload import ex
@@ -32,7 +34,7 @@ import tqdm
 import SimpleITK as sitk
 from torchvision.utils import make_grid
 
-from models.agun_model import AGUNet
+#from models.agun_model import AGUNet
 
 # config pre-trained model caching path
 os.environ['TORCH_HOME'] = "./pretrained_model"
@@ -47,6 +49,9 @@ def main(_run, _config, _log):
             _run.observers[0].save_file(source_file, f'source/{source_file}')
         shutil.rmtree(f'{_run.observers[0].basedir}/_sources')
 
+        
+    
+    
     cudnn.enabled = True
     cudnn.benchmark = True
     torch.cuda.set_device(device=_config['gpu_id'])
@@ -54,7 +59,7 @@ def main(_run, _config, _log):
 
     _log.info(f'###### Reload model {_config["reload_model_path"]} ######')
     model = FewShotSeg(pretrained_path = None, cfg=_config['model'])
-    model.load_state_dict(torch.load(_config['reload_model_path'])['model'],strict = False)
+    model.load_state_dict(torch.load(_config['reload_model_path'])['model'],strict = True)
 
     model = model.cuda()
     model.eval()
@@ -161,8 +166,10 @@ def main(_run, _config, _log):
                 #     for shot in way:
                 #         print(shot.shape)
                 suffix = 'mask'
+
+
                 support_fg_mask = [[shot[f'fg_{suffix}'].float().cuda() for shot in way]
-                                    for way in support_batched['support_mask']]
+                                   for way in support_batched['support_mask']]
                 support_bg_mask = [[shot[f'bg_{suffix}'].float().cuda() for shot in way]
                                     for way in support_batched['support_mask']]
 
@@ -183,14 +190,14 @@ def main(_run, _config, _log):
                         _scan_id = sample_batched["scan_id"][0]
                         outsize = te_dataset.dataset.info_by_scan[_scan_id]["array_size"]
                         outsize = (256, 256, outsize[0]) # original image read by itk: Z, H, W, in prediction we use H, W, Z
-                        _pred = np.zeros( outsize )
+                        _pred = np.zeros( outsize, dtype=np.float32 )
                         _pred.fill(np.nan)
-                        _labels = np.zeros(outsize)
-                        _qimgs = np.zeros((3,256,256,outsize[-1])) #outsize)
-                        supimgs = np.zeros((3,256,256,outsize[-1])) #outsize)
-                        supfgs = np.zeros((256,256,outsize[-1])) #outsize)
-                        _means = np.zeros((1,1,1,outsize[-1]))
-                        _stds = np.zeros((1,1,1,outsize[-1]))
+                        _labels = np.zeros(outsize, dtype=np.float32)
+                        _qimgs = np.zeros((3,256,256,outsize[-1]), dtype=np.float32) #outsize)
+                        supimgs = np.zeros((3,256,256,outsize[-1]), dtype=np.float32) #outsize)
+                        supfgs = np.zeros((256,256,outsize[-1]), dtype=np.float32) #outsize)
+                        _means = np.zeros((1,1,1,outsize[-1]),dtype=np.float32)
+                        _stds = np.zeros((1,1,1,outsize[-1]), dtype=np.float32)
 
                     q_part = sample_batched["part_assign"] # the chunck of query, for assignment with support
                     query_images = [sample_batched['image'].cuda()]
@@ -205,7 +212,10 @@ def main(_run, _config, _log):
                     # plt.show()
                     # print(len(sup_img_part),len(sup_img_part[0]),len(sup_img_part[0][0]),sup_img_part[0][0].shape,sup_img_part[0][0][0].shape)
 
-                    query_pred, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
+                    #query_pred, _, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
+                    model.update_student_encoder(model.student_encoder)
+                    model_output = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, class_ids=[curr_lb], isval = True, val_wsize = _config["val_wsize"] )
+                    query_pred = model_output[0]  # Take only the prediction output
 
                     # print(query_pred.cpu().numpy().shape,query_labels.cpu().numpy().shape)
                     # print(query_pred.min(), query_pred.max()) #/3)**0.5)
@@ -220,6 +230,7 @@ def main(_run, _config, _log):
                     # print(query_images[0].shape)
                     _qimgs[..., ii] = query_images[0].detach().cpu().clone().numpy()
                     # print(_qimgs.shape)
+                   
                     _means[..., ii] = sample_batched["mean"][0]
                     _stds[..., ii] = sample_batched["std"][0]
 

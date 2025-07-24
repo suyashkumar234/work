@@ -33,7 +33,7 @@ def cfg():
     seed = 1234
     gpu_id = 0
     mode = 'train' # for now only allows 'train' 
-    num_workers = 4 # 0 for debugging. 
+    num_workers = 0 # 0 for debugging. 
 
     dataset = 'CHAOST2_Superpix' # i.e. abdominal MRI
     use_coco_init = True # initialize backbone with MS_COCO initialization. Anyway coco does not contain medical images
@@ -44,18 +44,19 @@ def cfg():
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 500
-    save_snapshot_every = 25000
+    print_interval = 250
+    save_snapshot_every = 5000
     max_iters_per_load = 1000 # epoch size, interval for reloading the dataset
     scan_per_load = -1 # numbers of 3d scans per load for saving memory. If -1, load the entire dataset to the memory
     which_aug = 'sabs_aug' # standard data augmentation with intensity and geometric transforms
     input_size = (256, 256)
-    min_fg_data='100' # when training with manual annotations, indicating number of foreground pixels in a single class single slice. This empirically stablizes the training process
+    min_fg_data='1' # when training with manual annotations, indicating number of foreground pixels in a single class single slice. This empirically stablizes the training process
     label_sets = 0 # which group of labels taking as training (the rest are for testing)
     exclude_cls_list = [2, 3] # testing classes to be excluded in training. Set to [] if testing under setting 1
     usealign = True # see vanilla PANet
     use_wce = True
     viz = 1
+    fix_length=False
 
     ### Validation
     z_margin = 0 
@@ -103,7 +104,7 @@ def cfg():
 
     optim_type = 'sgd'
     optim = {
-        'lr': 1e-3, 
+        'lr': 1e-4, 
         'momentum': 0.9,
         'weight_decay': 0.0005,
     }
@@ -117,28 +118,35 @@ def cfg():
 
     path = {
         'log_dir': './runs',
-        'SABS':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Abdomen/RawData/Training/sabs_CT_normalized"
+        'SABS':{'data_dir': "E:\Suyash\cowpro\data\SABS\sabs_CT_normalized"
             },
-        'C0':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data"
+        'C0':{'data_dir': "E:\Suyash\cowpro\data"
             },
-        'CHAOST2':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized/"
+        'CHAOST2':{'data_dir': "E:\Suyash\cowpro\data\CHAOST2\chaos_MR_T2_normalized"
             },
-        'SABS_Superpix':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Abdomen/RawData/Training/sabs_CT_normalized"},
-        'C0_Superpix':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data"},
-        'CHAOST2_Superpix':{'data_dir': "E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized/"},
+        'FLARE22Train':{'data_dir':"E:\Suyash\cowpro\data\FLARE22Train\flare_CT_normalized"
+            },
+        'SABS_Superpix':{'data_dir': "E:\Suyash\cowpro\data\SABS\sabs_CT_normalized"},
+        'C0_Superpix':{'data_dir': "E:\Suyash\cowpro\data"},
+        'CHAOST2_Superpix':{'data_dir': "E:\Suyash\cowpro\data\CHAOST2\chaos_MR_T2_normalized"},
+        'FLARE22Train_Superpix':{'data_dir':"E:\Suyash\cowpro\data\FLARE22Train\flare_CT_normalized"}
         }
 
-    DATASET_CONFIG = {'SABS':{'img_bname': f'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Cervix/RawData/Training/sabs_CT_normalized/image_*.nii.gz',
-                        'out_dir': 'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/SABS/Cervix/RawData/Training/sabs_CT_normalized',
+    DATASET_CONFIG = {'SABS':{'img_bname': f'E:\Suyash\cowpro\data\SABS\sabs_CT_normalized/image_*.nii.gz',
+                        'out_dir': 'E:\Suyash\cowpro\data\SABS\sabs_CT_normalized',
                         'fg_thresh': 1e-4,
                         },
                       'CHAOST2':{
-                       'img_bname': f'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized/image_*.nii.gz',
-                          'out_dir': 'E:/Siladittya_JRF/cvpr2024/agun-sona-master/data/CHAOS/CHAOS_Train_Sets/Train_Sets/chaos_MR_T2_normalized',
+                       'img_bname': f'E:\Suyash\cowpro\data\CHAOST2\chaos_MR_T2_normalized/image_*.nii.gz',
+                          'out_dir': 'E:\Suyash\cowpro\data\CHAOST2\chaos_MR_T2_normalized',
                           'fg_thresh': 1e-4 + 50,
                         },
+                        'FLARE22Train':{
+                         'img_bname': f'E:\Suyash\cowpro\data\FLARE22Train\flare_CT_normalized/image_*.nii.gz',
+                          'out_dir': 'E:\Suyash\cowpro\data\FLARE22Train\flare_CT_normalized',
+                          'fg_thresh': 1e-4                     
+                        },
                      }
-
 
 @ex.config_hook
 def add_observer(config, command_name, logger):

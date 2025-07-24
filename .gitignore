@@ -19,8 +19,11 @@ lib64/
 parts/
 sdist/
 var/
+myenv/
 wheels/
 pip-wheel-metadata/
+exps/
+pretrained_model/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
