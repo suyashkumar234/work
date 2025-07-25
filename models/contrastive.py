@@ -32,12 +32,15 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
         B, C, H, W = feat_online.shape
         # Normalize features
         feat_online = F.normalize(feat_online, dim=1)
+        #print("shape of feat_online", feat_online.shape)
         feat_target = F.normalize(feat_target, dim=1)
+        #print("shape of feat_target", feat_target.shape)
         
         # Reshape features to (B*H*W, C)
         feat_online_flat = feat_online.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
+        #print("shape of feat_online_flat", feat_online_flat.shape)
         feat_target_flat = feat_target.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
-        
+        #print("shape of feat_target_flat", feat_target_flat.shape)
         # Reshape masks to (B*H*W,)
         mask_online_flat = mask_online.reshape(-1)  # (B*H*W,)
         mask_target_flat = mask_target.reshape(-1)  # (B*H*W,)
@@ -52,11 +55,15 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
         
         # Get foreground features
         fg_feat_online = feat_online_flat[fg_online]  # (N_fg_online, C)
+        #print("shape of fg_feat_online", fg_feat_online.shape)
         fg_feat_target = feat_target_flat[fg_target]  # (N_fg_target, C)
+        #print("shape of fg_feat_target", fg_feat_target.shape)
         
         # Get background features
         bg_feat_online = feat_online_flat[bg_online]  # (N_bg_online, C)
+
         bg_feat_target = feat_target_flat[bg_target]  # (N_bg_target, C)
+
         
         
         # Check if both masks are for the same organ class (positive pairs)
@@ -84,24 +91,40 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
 
         # Compute positive similarities with numerical stability
         pos_sim = torch.mm(fg_feat_online, fg_feat_target.t()) / max(self.temperature, 1e-7)
+        #print("shape of pos_sim", pos_sim.shape)
         pos_sim = torch.clamp(pos_sim, min=-50, max=50)  # Prevent overflow in cross_entropy
+        #print("shape of pos_sim after clamp", pos_sim.shape)
+
 
         # Compute negative similarities (online foreground vs target background)
         neg_sim_online = torch.mm(fg_feat_online, neg_feat_target.t()) / max(self.temperature, 1e-7)
+        #print("shape of neg_sim_online", neg_sim_online.shape)
         neg_sim_online = torch.clamp(neg_sim_online, min=-50, max=50)  # Prevent overflow
         # Compute negative similarities (online background vs target background)
+        #print("shape of neg_feat_online", neg_feat_online.shape)
+        #print("shape of neg_feat_target", neg_feat_target.shape)
         neg_sim_bg_online = torch.mm(neg_feat_online, neg_feat_target.t()) / max(self.temperature, 1e-7)
+        # print("shape of neg_feat_online", neg_feat_online.shape)
+        # print("shape of neg_feat_target", neg_feat_target.shape)
+        # print("shape of neg_sim_bg_online", neg_sim_bg_online.shape)
+        # print("neg_sim_bg_online similarity matrix:\n", neg_sim_bg_online)
         neg_sim_bg_online = torch.clamp(neg_sim_bg_online, min=-50, max=50)  # Prevent overflow
+        
 
+        # Compute row-wise average of positive similarities instead of using diagonal
+        pos_sim_avg = torch.mean(pos_sim, dim=1, keepdim=True)  # (N_fg_online, 1)
+        #print("shape of pos_sim_avg", pos_sim_avg.shape)
+        
         # For InfoNCE, create similarity matrix where each row represents
-        # one positive pair and multiple negative pairs
-        logits_online = torch.cat([pos_sim, neg_sim_online], dim=1)  # (N_fg_online, N_fg_target + num_neg)
+        # one averaged positive pair and multiple negative pairs
+        logits_online = torch.cat([pos_sim_avg, neg_sim_online], dim=1)  # (N_fg_online, 1 + num_neg)
+        #print("shape of logits_online", logits_online.shape)
         # Optionally, you can also include bg-bg negatives in the loss if you want to penalize background similarity
         # For now, we keep them separate for clarity
 
-        # Create labels for InfoNCE (the positive pair index for each row)
-        labels_online = torch.arange(min(fg_feat_online.shape[0], fg_feat_target.shape[0]), 
-                                    device=feat_online.device)
+        # Create labels for InfoNCE (the positive pair is now at index 0)
+        labels_online = torch.zeros(fg_feat_online.shape[0], device=feat_online.device, dtype=torch.long)
+        #print("labels", labels_online)
 
         # If we have more online foreground pixels than target, truncate
         if fg_feat_online.shape[0] > fg_feat_target.shape[0]:
@@ -116,26 +139,35 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
 
         # Compute InfoNCE loss for target->online direction (symmetric)
         neg_sim_target = torch.mm(fg_feat_target, neg_feat_online.t()) / max(self.temperature, 1e-7)
+        #print("shape of neg_sim_target", neg_sim_target.shape)
         neg_sim_target = torch.clamp(neg_sim_target, min=-50, max=50)  # Prevent overflow
-        logits_target = torch.cat([pos_sim.t(), neg_sim_target], dim=1)  # (N_fg_target, N_fg_online + num_neg)
-        labels_target = torch.arange(min(fg_feat_target.shape[0], fg_feat_online.shape[0]), 
-                                    device=feat_online.device)
-
+        #print("shape of neg_sim_target after clamp", neg_sim_target.shape)
+        
+        # Compute row-wise average of transposed pos_sim for target direction
+        pos_sim_avg_target = torch.mean(pos_sim.t(), dim=1, keepdim=True)  # (N_fg_target, 1)
+        #print("shape of pos_sim_avg_target", pos_sim_avg_target.shape)
+        
+        logits_target = torch.cat([pos_sim_avg_target, neg_sim_target], dim=1)  # (N_fg_target, 1 + num_neg)
+        #print("shape of logits_target", logits_target.shape)
+        labels_target = torch.zeros(fg_feat_target.shape[0], device=feat_online.device, dtype=torch.long)
+        #print("labels_target", labels_target)
         if fg_feat_target.shape[0] > fg_feat_online.shape[0]:
             logits_target = logits_target[:fg_feat_online.shape[0]]
 
         loss_target = F.cross_entropy(logits_target, labels_target)
-        
+        #print("shape of loss_target", loss_target.shape)
+        #print("loss_target", loss_target)
         # Check for NaN in loss_target
         if torch.isnan(loss_target) or torch.isinf(loss_target):
             loss_target = torch.tensor(0.0, device=feat_online.device, requires_grad=True)
-
+        #print("loss_target after check", loss_target)
         # Background-background negative pairing loss (optional, can be weighted)
         # Encourage background features to be consistent between online and target
         # Here, we use InfoNCE-style loss for bg-bg as well
         if num_neg > 1:
             # For bg-bg, treat each online bg as anchor, target bg as positives (diagonal), rest as negatives
             bg_labels = torch.arange(num_neg, device=feat_online.device)
+            #print("bg_labels", bg_labels)
             loss_bg = F.cross_entropy(neg_sim_bg_online, bg_labels)
             
             # Check for NaN in loss_bg
