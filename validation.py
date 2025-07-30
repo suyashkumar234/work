@@ -14,9 +14,10 @@ import numpy as np
 
 from models.grid_proto_fewshot import FewShotSeg
 
-from dataloaders.dev_customized_medv1 import med_fewshot_val
-from dataloaders.ManualAnnoDatasetv1 import ManualAnnoDataset
-from dataloaders.GenericSuperDatasetv1 import SuperpixelDataset
+from dataloaders.dev_customized_med import med_fewshot_val
+from dataloaders.ManualAnnoDatasetv2 import ManualAnnoDataset  
+from dataloaders.GenericSuperDatasetv2 import SuperpixelDataset
+from dataloaders import augutils as myaug  # Import augutils for augmentation
 from dataloaders.dataset_utils import DATASET_INFO, get_normalize_op
 from dataloaders.niftiio import convert_to_sitk
 
@@ -32,7 +33,7 @@ import tqdm
 import SimpleITK as sitk
 from torchvision.utils import make_grid
 
-from models.agun_model import AGUNet
+# from models.agun_model import AGUNet  # Not needed for validation
 
 # config pre-trained model caching path
 os.environ['TORCH_HOME'] = "./pretrained_model"
@@ -49,14 +50,16 @@ def main(_run, _config, _log):
 
     cudnn.enabled = True
     cudnn.benchmark = True
-    torch.cuda.set_device(device=_config['gpu_id'])
+    # torch.cuda.set_device(device=_config['gpu_id'])  # Skip for M1 Mac
     torch.set_num_threads(1)
 
     _log.info(f'###### Reload model {_config["reload_model_path"]} ######')
     model = FewShotSeg(pretrained_path = None, cfg=_config['model'])
     model.load_state_dict(torch.load(_config['reload_model_path'])['model'],strict = False)
 
-    model = model.cuda()
+    # Use MPS device for M1 Mac, fallback to CPU
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    model = model.to(device)
     model.eval()
 
     _log.info('###### Load data ######')
@@ -153,7 +156,7 @@ def main(_run, _config, _log):
                                                         npart=_config['task']['npart'])
 
                 # way(1 for now) x part x shot x 3 x H x W] #
-                support_images = [[shot.cuda() for shot in way]
+                support_images = [[shot.to(device) for shot in way]
                                     for way in support_batched['support_images']] # way x part x [shot x C x H x W]
                 # print(len(support_images))
                 # for way in support_images:
@@ -161,9 +164,9 @@ def main(_run, _config, _log):
                 #     for shot in way:
                 #         print(shot.shape)
                 suffix = 'mask'
-                support_fg_mask = [[shot[f'fg_{suffix}'].float().cuda() for shot in way]
+                support_fg_mask = [[shot[f'fg_{suffix}'].float().to(device) for shot in way]
                                     for way in support_batched['support_mask']]
-                support_bg_mask = [[shot[f'bg_{suffix}'].float().cuda() for shot in way]
+                support_bg_mask = [[shot[f'bg_{suffix}'].float().to(device) for shot in way]
                                     for way in support_batched['support_mask']]
 
                 # print('n_shots: ',len(support_images[0]))
@@ -193,8 +196,8 @@ def main(_run, _config, _log):
                         _stds = np.zeros((1,1,1,outsize[-1]))
 
                     q_part = sample_batched["part_assign"] # the chunck of query, for assignment with support
-                    query_images = [sample_batched['image'].cuda()]
-                    query_labels = torch.cat([ sample_batched['label'].cuda()], dim=0)
+                    query_images = [sample_batched['image'].to(device)]
+                    query_labels = torch.cat([ sample_batched['label'].to(device)], dim=0)
 
                     # [way, [part, [shot x C x H x W]]] ->
                     sup_img_part = [[shot_tensor.unsqueeze(0) for shot_tensor in support_images[0][q_part]]]   # way(1) x shot x [B(1) x C x H x W]
@@ -205,7 +208,11 @@ def main(_run, _config, _log):
                     # plt.show()
                     # print(len(sup_img_part),len(sup_img_part[0]),len(sup_img_part[0][0]),sup_img_part[0][0].shape,sup_img_part[0][0][0].shape)
 
-                    query_pred, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
+                    # Update student encoder with teacher for consistency (no gradients needed)
+                    model.update_student_encoder(model.student_encoder)
+                    
+                    model_output = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, class_ids=[curr_lb], isval = True, val_wsize = _config["val_wsize"] )
+                    query_pred = model_output[0]  # Take only the prediction output
 
                     # print(query_pred.cpu().numpy().shape,query_labels.cpu().numpy().shape)
                     # print(query_pred.min(), query_pred.max()) #/3)**0.5)

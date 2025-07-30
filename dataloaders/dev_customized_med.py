@@ -214,6 +214,8 @@ def fewshot_pairing(paired_sample, n_ways, n_shots, cnt_query, coco=False, mask_
             # Use your actual global mean and std values, sice using sabs so hardcoded the mean and stds
             query_means.append(43.976137634840306)  # Your global mean
             query_stds.append(62.870143674709354)   # Your global std
+    #print(class_ids)
+    #print('siuuuu')
     return {'class_ids': class_ids,
             'support_images': support_images,
             'support_mask': support_mask,

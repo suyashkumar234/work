@@ -151,6 +151,15 @@ class ReloadPairedDataset(Dataset):
             for transform, args in self.pair_based_transforms:
                 sample = transform(sample, **args)
         return sample
+    
+    def reload_buffer(self):
+        """
+        Reload buffers for all underlying datasets that have this method
+        """
+        for dataset in self.datasets:
+            if hasattr(dataset, 'reload_buffer'):
+                dataset.reload_buffer()
+        self.update_index()
 
 class Subset(Dataset):
     """

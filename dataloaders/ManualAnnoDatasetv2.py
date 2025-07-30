@@ -289,7 +289,7 @@ class ManualAnnoDataset(BaseDataset): # inheriting functions from class BaseData
             img = curr_dict['img']
             lb = curr_dict['lb']
             # print(lb.sum(), lb.shape, np.unique(lb))
-
+        #print("Final label in sample:", np.unique(lb))
         img = np.float32(img)
         # print(img.shape)
         lb = np.float32(lb).squeeze(-1) # NOTE: to be suitable for the PANet structure
@@ -432,7 +432,7 @@ class ManualAnnoDataset(BaseDataset): # inheriting functions from class BaseData
         # self.potential_support_sid = np.random.choice(self.scan_ids, replace = False, size = npart)#self.scan_per_load)# 
         # print(self.potential_support_sid)
         # print(f'###### Using {len(scan_idx)} shot evaluation!')
-        print(f'###### Using {len(self.potential_support_sid)} shot evaluation!')
+        #print(f'###### Using {len(self.potential_support_sid)} shot evaluation!')
         # print(scan_idx, self.potential_support_sid)
 
         if npart == 1:

@@ -92,9 +92,13 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
           # Create labels for InfoNCE (the positive pair is now at index 0)
           labels_online = torch.zeros(fg_feat_online.shape[0], device=feat_online.device, dtype=torch.long)
 
-          # If we have more online foreground pixels than target, truncate
-          if fg_feat_online.shape[0] > fg_feat_target.shape[0]:
-              logits_online = logits_online[:fg_feat_target.shape[0]]
+          # Handle size mismatch between online and target features
+          min_size = min(fg_feat_online.shape[0], fg_feat_target.shape[0])
+          if min_size == 0:
+              return torch.tensor(0.0, device=feat_online.device, requires_grad=True)
+              
+          logits_online = logits_online[:min_size]
+          labels_online = labels_online[:min_size]
 
           # Compute InfoNCE loss for online->target direction
           loss_online = F.cross_entropy(logits_online, labels_online)
@@ -113,8 +117,9 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
           logits_target = torch.cat([pos_sim_avg_target, neg_sim_target], dim=1)  # (N_fg_target, 1 + num_neg)
           labels_target = torch.zeros(fg_feat_target.shape[0], device=feat_online.device, dtype=torch.long)
 
-          if fg_feat_target.shape[0] > fg_feat_online.shape[0]:
-              logits_target = logits_target[:fg_feat_online.shape[0]]
+          # Use the same min_size for consistency
+          logits_target = logits_target[:min_size]
+          labels_target = labels_target[:min_size]
 
           loss_target = F.cross_entropy(logits_target, labels_target)
 

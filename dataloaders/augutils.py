@@ -196,3 +196,81 @@ def transform_with_label(aug):
 
     return transform
 
+
+def dual_transform_for_ssl(aug):
+    """
+    Create two different augmentation transforms for SSL online-target learning.
+    Returns two separate transforms that apply different augmentations to the same input.
+    """
+    
+    # Create two different geometric transformers with different random seeds
+    geometric_tfx_online = get_geometric_transformer(aug, order=3)
+    geometric_tfx_target = get_geometric_transformer(aug, order=3)
+    
+    # Create two different intensity transformers 
+    intensity_tfx_online = get_intensity_transformer(aug)
+    intensity_tfx_target = get_intensity_transformer(aug)
+    
+    def dual_transform(comp, c_label, c_img, use_onehot, nclass, **kwargs):
+        """
+        Apply two different augmentations to the same input.
+        
+        Args:
+            comp: numpy array with shape [H x W x C + c_label]
+            c_label: number of channels for compact label
+            c_img: number of image channels
+            use_onehot: whether to use one-hot representation
+            nclass: number of classes
+            
+        Returns:
+            tuple: ((img_online, mask_online), (img_target, mask_target))
+        """
+        comp_original = copy.deepcopy(comp)
+        
+        if (use_onehot is True) and (c_label != 1):
+            raise NotImplementedError("Only allow compact label, also the label can only be 2d")
+        assert c_img + 1 == comp_original.shape[-1], "only allow single slice 2D label"
+        
+        # Prepare one-hot labels
+        _label = comp_original[..., c_img]
+        _h_label = np.float32(np.arange(nclass) == (_label[..., None]))
+        comp_with_onehot = np.concatenate([comp_original[..., :c_img], _h_label], -1)
+        
+        # Apply first augmentation (online)
+        comp_online = copy.deepcopy(comp_with_onehot)
+        comp_online = geometric_tfx_online(comp_online)
+        
+        # Extract and round labels for online
+        t_label_h_online = comp_online[..., c_img:]
+        t_label_h_online = np.rint(t_label_h_online)
+        assert t_label_h_online.max() <= 1
+        t_img_online = comp_online[..., 0:c_img]
+        
+        # Apply intensity transform for online
+        t_img_online = intensity_tfx_online(t_img_online)
+        
+        # Apply second augmentation (target)
+        comp_target = copy.deepcopy(comp_with_onehot)
+        comp_target = geometric_tfx_target(comp_target)
+        
+        # Extract and round labels for target
+        t_label_h_target = comp_target[..., c_img:]
+        t_label_h_target = np.rint(t_label_h_target)
+        assert t_label_h_target.max() <= 1
+        t_img_target = comp_target[..., 0:c_img]
+        
+        # Apply intensity transform for target
+        t_img_target = intensity_tfx_target(t_img_target)
+        
+        # Convert labels based on use_onehot flag
+        if use_onehot is True:
+            t_label_online = t_label_h_online
+            t_label_target = t_label_h_target
+        else:
+            t_label_online = np.expand_dims(np.argmax(t_label_h_online, axis=-1), -1)
+            t_label_target = np.expand_dims(np.argmax(t_label_h_target, axis=-1), -1)
+            
+        return (t_img_online, t_label_online), (t_img_target, t_label_target)
+    
+    return dual_transform
+
