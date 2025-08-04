@@ -42,7 +42,16 @@ augs = {
     'sabs_aug': sabs_aug,
     'aug_v3': sabs_augv3, # more aggresive
 }
-
+# For different augmentation
+dual_augs = {
+    'online': sabs_augv3,    # More aggressive for online encoder (student)
+    'target': sabs_aug,      # Conservative for target encoder (teacher)
+    # Alternative strategies to try:
+    'online_v2': sabs_aug,   # Try conservative for online instead
+    'target_v2': sabs_augv3, # Try aggressive for target instead
+    'online_none': {'gamma_range': False},  # No augmentation for online
+    'target_none': {'gamma_range': False}   # No augmentation for target
+}
 def get_geometric_transformer(aug, order=3):
     """
     Fixed version that properly handles RandomAffine and ElasticTransform
@@ -195,4 +204,54 @@ def transform_with_label(aug):
         return t_img, t_label
 
     return transform
+
+def dual_transform_with_label(online_aug_key='online', target_aug_key='target'):
+    """
+    Create separate transform functions for online and target encoders
+    Args:
+        online_aug_key: Key for online encoder augmentation (default: 'online')
+        target_aug_key: Key for target encoder augmentation (default: 'target')
+    Returns:
+        Tuple of (online_transform, target_transform)
+    """
+    online_transform = transform_with_label({'aug': dual_augs[online_aug_key]})
+    target_transform = transform_with_label({'aug': dual_augs[target_aug_key]})
+    
+    return online_transform, target_transform
+
+def get_dual_aug_strategy(strategy='default'):
+    """
+    Get augmentation keys based on strategy
+    Args:
+        strategy: Strategy name
+    Returns:
+        Tuple of (online_key, target_key)
+    """
+    strategies = {
+        'default': ('online', 'target'),           # Aggressive online, conservative target
+        'swapped': ('online_v2', 'target_v2'),     # Conservative online, aggressive target  
+        'none': ('online_none', 'target_none'),    # No augmentation for both
+        'aggressive_both': ('online', 'online'),   # Aggressive for both
+        'conservative_both': ('target', 'target'),  # Conservative for both
+        'teacher_clean': ('online_none', 'target') # No aug for teacher, conservative for student
+    }
+    
+    if strategy not in strategies:
+        print(f"Warning: Unknown strategy '{strategy}', using 'default'")
+        strategy = 'default'
+    
+    online_key, target_key = strategies[strategy]
+    print(f"Using dual augmentation strategy: {strategy} (online={online_key}, target={target_key})")
+    
+    return online_key, target_key
+
+def create_dual_augmentation_transforms():
+    """
+    Convenience function to create the standard dual augmentation setup
+    Returns:
+        Tuple of (online_transform, target_transform) where:
+        - online_transform uses aggressive augmentation (sabs_augv3)
+        - target_transform uses conservative augmentation (sabs_aug)
+    """
+    return dual_transform_with_label()
 

@@ -130,3 +130,17 @@ dmypy.json
 
 # Ignore experiment outputs
 exps/
+
+data/
+  augmentation_visualizations/
+  *.out
+  *.err
+  .DS_Store
+  myenv/
+  runs/
+  pretrained_model/
+
+  # Model files
+  *.pth
+  pretrained_model/
+  runs/

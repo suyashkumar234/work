@@ -52,6 +52,7 @@ do # marks the beginning of a fold
     'modelname=dlfcn_res101' \
     'usealign=True' \
     'optim_type=sgd' \
+    batch_size=1 \
     num_workers=$NWORKER \
     scan_per_load=-1 \
     label_sets=$LABEL_SETS \

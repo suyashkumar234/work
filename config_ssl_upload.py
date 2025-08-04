@@ -14,18 +14,20 @@ from sacred.utils import apply_backspaces_and_linefeeds
 
 from platform import node
 from datetime import datetime
+sacred.SETTINGS['DISCOVER_SOURCES'] = 'none'
+sacred.SETTINGS['DISCOVER_DEPENDENCIES'] = 'none'
 
 sacred.SETTINGS['CONFIG']['READ_ONLY_CONFIG'] = False
 sacred.SETTINGS.CAPTURE_MODE = 'no'
 
-ex = Experiment('mySSL')
+ex = Experiment('mySSL', save_git_info=False)
 ex.captured_out_filter = apply_backspaces_and_linefeeds
 
-source_folders = ['.', './dataloaders', './models', './util']
-sources_to_save = list(itertools.chain.from_iterable(
-    [glob.glob(f'{folder}/*.py') for folder in source_folders]))
-for source_file in sources_to_save:
-    ex.add_source_file(source_file)
+# source_folders = ['.', './dataloaders', './models', './util']
+# sources_to_save = list(itertools.chain.from_iterable(
+#     [glob.glob(f'{folder}/*.py') for folder in source_folders]))
+# for source_file in sources_to_save:
+#     ex.add_source_file(source_file)
 
 # Add these modifications to your config_ssl_upload.py:
 
@@ -34,27 +36,32 @@ def cfg():
     """Default configurations - M1 Mac optimized"""
     seed = 1234
     gpu_id = 0  # Will be ignored on M1 Mac, kept for compatibility
-    mode = 'train'
-    dataset = 'Sabs_Superpix'
+    mode = 'train'  # Changed to test mode for validation
+    dataset = 'SABS_Superpix'
     use_coco_init = True
     # Optimized for M1 Mac
-    num_workers = 0 # M1 has good CPU cores, but don't oversubscribe
+    num_workers = 8 # M1 has good CPU cores, but don't oversubscribe
 
     ### Training - adjusted for M1 Mac memory constraints
     n_steps = 100100  # Reduced from 100100 for faster testing
     batch_size = 1   # Keep at 1 for memory efficiency
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
+    #lr_milestones = [50000, 100000, 150000, 200000, 250000]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 250  # More frequent updates for shorter runs
-    save_snapshot_every = 12500  # More frequent saves
-    max_iters_per_load = 500  # Reduced for M1 Mac
+    print_interval = 5000  # More frequent updates for shorter runs
+    save_snapshot_every = 25000  # More frequent saves
+    max_iters_per_load = 1000  # Reduced for M1 Mac
     scan_per_load = -1 # Load entire dataset if memory allows
     which_aug = 'sabs_aug'
+    # Dual augmentation for online-target SSL training
+    use_dual_augs = True  # Set to False to use original single augmentation    
     input_size = (256, 256)  # Keep reasonable size for M1
-    min_fg_data='100'
-    label_sets = 0
-    exclude_cls_list = [2, 3]
+    min_fg_data='1'  # Changed for validation
+    #label_sets = 1
+    #exclude_cls_list = [1,6]
+    label_sets=0
+    exclude_cls_list = [2,3]
     usealign = True
     use_wce = True
     viz = 1
@@ -73,12 +80,17 @@ def cfg():
     modelname = 'dlfcn_res101'  # This should work fine on M1
     clsname = 'grid_proto'
     resume = False
-    reload_model_path = './exps/your_model_path.pth'  # Update this path
+    reload_model_path = './exps/myexp_MIDDLE_0/mySSL_train_SABS_Superpix_lbgroup0_scale_MIDDLE_vfold0_SABS_Superpix_sets_0_1shot/16/snapshots/100000.pth'
     proto_grid_size = 8
     feature_hw = [32, 32]
 
     # SSL
     superpix_scale = 'MIDDLE'
+    # Contrastive Learning Hyperparameters
+    ssl_temperature = 0.1    # Try: 0.05, 0.1, 0.2, 0.5
+    ssl_momentum = 0.95      # Try: 0.9, 0.95, 0.99, 0.999
+
+    dual_aug_strategy = 'teacher_clean'  # Options: 'default', 'swapped', 'none', 'aggressive_both', 'conservative_both'
 
     tversky_params = {'tversky_alpha' : 0.3,
                     'tversky_beta' : 0.7,
@@ -96,6 +108,8 @@ def cfg():
         'proto_grid_size' : proto_grid_size,
         'feature_hw': feature_hw,
         'reload_model_path': reload_model_path,
+        'temperature': ssl_temperature,
+        'momentum': ssl_momentum,
     }
 
     task = {
@@ -105,13 +119,14 @@ def cfg():
         'npart': n_sup_part 
     }
 
-    optim_type = 'adam'  # Adam often works better on M1
+    optim_type = 'sgd'
     optim = {
-        'lr': 5e-4,  # Slightly lower learning rate for stability
+        'lr': 1e-3, 
+        'momentum': 0.9,
         'weight_decay': 0.0005,
     }
 
-    exp_prefix = 'm1_mac'  # Identify M1 runs
+    exp_prefix = ''  # Identify M1 runs
 
     exp_str = '_'.join(
         [exp_prefix]
@@ -120,18 +135,18 @@ def cfg():
 
     # Update paths for your system - replace with your actual data paths
     path = {
-        'log_dir': './runs',
-        'SABS':{'data_dir': "/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized"  # UPDATE THIS
+        'log_dir': './exps',
+        'SABS':{'data_dir': "/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/"  # UPDATE THIS
             },
         'CHAOST2':{'data_dir': "/path/to/your/CHAOS/data"  # UPDATE THIS
             },
-        'SABS_Superpix':{'data_dir': "/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized"},  # UPDATE THIS
+        'SABS_Superpix':{'data_dir': "/home/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/"},  # UPDATE THIS
         'CHAOST2_Superpix':{'data_dir': "/path/to/your/CHAOS/data"},  # UPDATE THIS
         }
 
     # Update dataset config paths too
-    DATASET_CONFIG = {'SABS':{'img_bname': f'/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz',  # UPDATE
-                        'out_dir': '/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized',  # UPDATE
+    DATASET_CONFIG = {'SABS':{'img_bname':  f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz',  # UPDATE
+                        'out_dir': '/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/',  # UPDATE
                         'fg_thresh': 1e-4,
                         },
                       'CHAOST2':{

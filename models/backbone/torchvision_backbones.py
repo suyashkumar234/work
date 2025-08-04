@@ -48,8 +48,8 @@ class Encoder(nn.Module):
 
 class TVDeeplabRes101Encoder(nn.Module):
     """
-    FCN-Resnet101 backbone from torchvision deeplabv3
-    No ASPP is used as we found emperically it hurts performance
+    FCN-Resnet50 backbone from torchvision deeplabv3
+    No ASPP is used as we found empirically it hurts performance
     """
     def __init__(self, use_coco_init, aux_dim_keep = 64, use_aspp = False):
         super().__init__()
@@ -58,9 +58,9 @@ class TVDeeplabRes101Encoder(nn.Module):
                                                                      num_classes=21, 
                                                                      aux_loss=None)
         if use_coco_init:
-            print("###### NETWORK: Using ms-coco initialization ######")
+            print("###### NETWORK: Using ms-coco initialization (ResNet101) ######")
         else:
-            print("###### NETWORK: Training from scratch ######")
+            print("###### NETWORK: Training from scratch (ResNet101) ######")
 
         _model_list = list(_model.children())
         self.aux_dim_keep = aux_dim_keep

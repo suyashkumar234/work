@@ -1,0 +1,3 @@
+        def CT_normalize(x_in):
+            normalized_img = (x_in - ct_mean) / ct_std
+            return normalized_img, ct_mean, ct_std
