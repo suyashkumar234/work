@@ -196,14 +196,17 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         print(f"Using dual augmentation strategy: {dual_aug_strategy}")
         print(f"  - Online encoder (teacher): {online_key}")
         print(f"  - Target encoder (student): {target_key}")
+
         # Create dual augmentation transforms for online-target SSL training
         online_transforms, target_transforms = myaug.dual_transform_with_label(online_key, target_key)
+        query_transforms = myaug.get_query_transform(_config['which_aug'])
         tr_transforms = None  # Will use dual transforms instead
     else:
         # Original single augmentation strategy
         tr_transforms = myaug.transform_with_label({'aug': myaug.augs[_config['which_aug']]})
         online_transforms = None
         target_transforms = None
+        query_transforms = myaug.get_query_transform(_config['which_aug'])
         print(f"Using single augmentation strategy: {_config['which_aug']}")
     ### ================================================================================== ###
     assert _config['scan_per_load'] < 0 # by default we load the entire dataset directly
@@ -230,6 +233,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             transforms = None, # Not used in dual mode
             online_transforms = online_transforms,
             target_transforms = target_transforms,
+            query_transforms = query_transforms,
             transform_param_limits = myaug.dual_augs['online'], # Use online params for limits
             nsup = _config['task']['n_shots'],
             scan_per_load = _config['scan_per_load'],

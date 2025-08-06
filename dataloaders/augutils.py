@@ -219,6 +219,14 @@ def dual_transform_with_label(online_aug_key='online', target_aug_key='target'):
     
     return online_transform, target_transform
 
+def get_query_transform(which_aug='sabs_aug'):
+    """
+    Get augmentation transform for query images.
+    Query should always use specified augmentation regardless of support strategy.
+    """
+    aug_config = augs.get(which_aug, sabs_aug)
+    return transform_with_label({'aug': aug_config})
+
 def get_dual_aug_strategy(strategy='default'):
     """
     Get augmentation keys based on strategy

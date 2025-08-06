@@ -43,7 +43,7 @@ class SuperpixelDataset(BaseDataset):
                 base_dir, 
                 idx_split, 
                 mode, scan_per_load, transforms = None, transform_param_limits = None, 
-                online_transforms = None, target_transforms = None,
+                online_transforms = None, target_transforms = None,query_transforms = None,
                 num_rep = 2, 
                 min_fg = '', nsup = 1, 
                 fix_length = None, tile_z_dim = 3, 
@@ -82,6 +82,7 @@ class SuperpixelDataset(BaseDataset):
         
         # Store dual transforms for online-target SSL training
         self.online_transforms = online_transforms
+        self.query_transforms = query_transforms
         self.target_transforms = target_transforms
         self.use_dual_transforms = (online_transforms is not None and target_transforms is not None)
         
@@ -501,7 +502,13 @@ class SuperpixelDataset(BaseDataset):
                 
                 # Apply target transform (conservative augmentation)  
                 img_target, lb_target = self.target_transforms(comp, c_img=1, c_label=1, nclass=self.nclass, use_onehot=False)
-                img_query, lb_query = self.online_transforms(comp, c_img=1, c_label=1, nclass=self.nclass, use_onehot=False)
+                #img_query, lb_query = self.online_transforms(comp, c_img=1, c_label=1, nclass=self.nclass, use_onehot=False)
+                if self.query_transforms is not None:
+                    img_query, lb_query = self.query_transforms(comp, c_img=1, c_label=1, nclass=self.nclass, use_onehot=False)
+                else:
+                    # Fallback to standard transforms if no query_transforms set
+                    img_query, lb_query = self.transforms(comp, c_img=1, c_label=1, nclass=self.nclass, use_onehot=False)
+                    
                 # Process online version
                 if img_online.ndim == 2:
                     img_online = img_online[:,:,None]
