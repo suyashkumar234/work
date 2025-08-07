@@ -79,6 +79,12 @@ def cfg():
 
     # SSL
     superpix_scale = 'MIDDLE'
+    
+    # SSL Attention Configuration
+    use_ssl_attention = False  # Enable/disable SSL attention module (temporarily disabled for debugging)
+    ssl_attention_heads = 4   # Number of attention heads (reduced for compatibility)
+    ssl_attention_layers = 1  # Number of attention layers
+    ssl_attention_dropout = 0.1  # Attention dropout rate
 
     tversky_params = {'tversky_alpha' : 0.3,
                     'tversky_beta' : 0.7,
@@ -96,6 +102,10 @@ def cfg():
         'proto_grid_size' : proto_grid_size,
         'feature_hw': feature_hw,
         'reload_model_path': reload_model_path,
+        'use_ssl_attention': use_ssl_attention,
+        'ssl_attention_heads': ssl_attention_heads,
+        'ssl_attention_layers': ssl_attention_layers,
+        'ssl_attention_dropout': ssl_attention_dropout,
     }
 
     task = {

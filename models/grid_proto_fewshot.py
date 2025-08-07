@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from .alpmodule import MultiProtoAsConv
 from .alpmodule2 import MultiProtoAsWCos
 from .contrastive import ContrastiveLoss
+from .ssl_attention import SSLAttentionModule, FeatureMaskAttention
 from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
 # DEBUG
 from util.utils import get_tversky_loss
@@ -46,6 +47,17 @@ class FewShotSeg(nn.Module):
         self.contrastive_loss = ContrastiveLoss(
             temperature=self.temperature
         )
+        
+        # SSL Attention Module for online-target feature interaction
+        # Feature dimension from ResNet101 encoder is 256 (after localconv)
+        self.use_ssl_attention = self.config.get('use_ssl_attention', True)
+        if self.use_ssl_attention:
+            self.ssl_attention = SSLAttentionModule(
+                feature_dim=256, 
+                n_heads=self.config.get('ssl_attention_heads', 8), 
+                dropout=self.config.get('ssl_attention_dropout', 0.1), 
+                n_layers=self.config.get('ssl_attention_layers', 1)
+            )
 
     def get_encoder(self, in_channels):
         # if self.config['which_model'] == 'deeplab_res101':
@@ -239,16 +251,40 @@ class FewShotSeg(nn.Module):
             binary_fg_msk_teacher_flat = binary_fg_msk_teacher.view(-1, *binary_fg_msk_teacher.shape[-2:])  # (B, H, W)
             binary_fg_msk_student_flat = binary_fg_msk_student.view(-1, *binary_fg_msk_student.shape[-2:])  # (B, H, W)
             
+            # Apply SSL Attention before contrastive loss (if enabled)
+            if self.use_ssl_attention:
+                # Self-attention on both encoders + cross-attention between them
+                enhanced_supp_fts_student, enhanced_supp_fts_teacher, attention_weights = self.ssl_attention(
+                    supp_fts_student_flat,  # online features (student)
+                    supp_fts_teacher_flat   # target features (teacher)
+                    # Note: Masks disabled temporarily to debug shape issues
+                    # online_mask=binary_fg_msk_student_flat,  # optional mask for online
+                    # target_mask=binary_fg_msk_teacher_flat   # optional mask for target
+                )
+            else:
+                # Use original features without attention
+                enhanced_supp_fts_student = supp_fts_student_flat
+                enhanced_supp_fts_teacher = supp_fts_teacher_flat
+                attention_weights = None
+            
             # Calculate TRUE self-supervised contrastive loss WITHOUT organ class information
+            # Use attention-enhanced features for contrastive learning
             contrastive_loss = self.contrastive_loss(
-            supp_fts_teacher_flat,  # (B, C, H, W)
-            supp_fts_student_flat,  # (B, C, H, W)
-            binary_fg_msk_teacher_flat,  # (B, H, W) - binary mask (0 or 1)
-            binary_fg_msk_student_flat   # (B, H, W) - binary mask (0 or 1)
-      # NO ORGAN CLASS IDs - this is now true SSL
-  )
+                enhanced_supp_fts_teacher,  # (B, C, H, W) - attention-enhanced teacher features
+                enhanced_supp_fts_student,  # (B, C, H, W) - attention-enhanced student features
+                binary_fg_msk_teacher_flat,  # (B, H, W) - binary mask (0 or 1)
+                binary_fg_msk_student_flat   # (B, H, W) - binary mask (0 or 1)
+                # NO ORGAN CLASS IDs - this is now true SSL with attention
+            )
             
-            
+            # Reshape enhanced features back to original format for classifier
+            # From (B, C, H, W) back to (n_ways, n_shots, sup_bsize, C, H, W)
+            enhanced_supp_fts_teacher_reshaped = enhanced_supp_fts_teacher.view(
+                n_ways, n_shots, sup_bsize, *enhanced_supp_fts_teacher.shape[1:]
+            )
+            enhanced_supp_fts_student_reshaped = enhanced_supp_fts_student.view(
+                n_ways, n_shots, sup_bsize, *enhanced_supp_fts_student.shape[1:]
+            )
 
             scores          = []
             assign_maps     = []
@@ -256,7 +292,7 @@ class FewShotSeg(nn.Module):
             fg_sim_maps     = []
 
             
-            _raw_score, _, aux_attr = self.cls_unit(qry_fts_teacher, supp_fts_teacher, res_bg_msk_teacher, mode = BG_PROT_MODE, 
+            _raw_score, _, aux_attr = self.cls_unit(qry_fts_teacher, enhanced_supp_fts_teacher_reshaped, res_bg_msk_teacher, mode = BG_PROT_MODE, 
                                                     fg = False,thresh = BG_THRESH, isval = isval, 
                                                     val_wsize = val_wsize, vis_sim = show_viz  )
 
@@ -266,7 +302,7 @@ class FewShotSeg(nn.Module):
                 bg_sim_maps.append(aux_attr['raw_local_sims'])
 
             for way, _msk in enumerate(res_fg_msk_teacher):
-                _raw_score, _, aux_attr = self.cls_unit(qry_fts_teacher, supp_fts_teacher , _msk.unsqueeze(0), fg = True, 
+                _raw_score, _, aux_attr = self.cls_unit(qry_fts_teacher, enhanced_supp_fts_teacher_reshaped , _msk.unsqueeze(0), fg = True, 
                                                         mode = FG_PROT_MODE, # if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask', 
                                                         thresh = FG_THRESH, isval = isval, 
                                                         val_wsize = val_wsize, vis_sim = show_viz  ) #if F.avg_pool2d(_msk, 4).max() >= FG_THRESH and FG_PROT_MODE != 'mask' else 'mask'
