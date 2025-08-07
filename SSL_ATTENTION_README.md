@@ -17,11 +17,11 @@ This implementation adds self-attention and cross-attention mechanisms to the SS
 ### 2. Integration Pipeline
 
 **Processing Flow:**
-1. **Feature Extraction**: Both online (student) and target (teacher) encoders extract support features
+1. **Feature Extraction**: Both online (teacher, gradient-updated) and target (student, momentum-updated) encoders extract support features
 2. **Self-Attention**: Each encoder's features undergo self-attention to capture internal relationships
 3. **Cross-Attention**: 
-   - Online features attend to target features
-   - Target features attend to online features
+   - Online (teacher) features attend to target (student) features
+   - Target (student) features attend to online (teacher) features
 4. **Contrastive Learning**: Enhanced features are used for contrastive loss calculation
 5. **Classification**: Enhanced features are also used for final segmentation predictions
 
@@ -33,13 +33,13 @@ This implementation adds self-attention and cross-attention mechanisms to the SS
 - **Dropout** for regularization
 
 ### Self-Attention Benefits
-- **Online Features**: Captures spatial relationships within student encoder features
-- **Target Features**: Captures spatial relationships within teacher encoder features
+- **Online Features**: Captures spatial relationships within teacher encoder features (gradient-updated)
+- **Target Features**: Captures spatial relationships within student encoder features (momentum-updated)
 - Helps learn better feature representations through internal attention
 
 ### Cross-Attention Benefits
-- **Online → Target**: Student features learn from teacher features
-- **Target → Online**: Teacher features are refined by student features
+- **Online → Target**: Teacher (gradient-updated) features attend to student (momentum-updated) features
+- **Target → Online**: Student (momentum-updated) features attend to teacher (gradient-updated) features
 - Creates bidirectional information flow between encoders
 
 ### Mask-Aware Processing
@@ -60,7 +60,7 @@ ssl_attention_dropout = 0.1     # Dropout rate for attention
 ## Implementation Details
 
 ### Feature Dimensions
-- **Input**: `[B, C, H, W]` where C=512 (ResNet101 features)
+- **Input**: `[B, C, H, W]` where C=256 (ResNet101 features after localconv)
 - **Attention Processing**: Reshaped to `[B, H*W, C]` for sequence processing
 - **Output**: Reshaped back to `[B, C, H, W]` for downstream processing
 

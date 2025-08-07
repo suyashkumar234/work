@@ -254,17 +254,17 @@ class FewShotSeg(nn.Module):
             # Apply SSL Attention before contrastive loss (if enabled)
             if self.use_ssl_attention:
                 # Self-attention on both encoders + cross-attention between them
-                enhanced_supp_fts_student, enhanced_supp_fts_teacher, attention_weights = self.ssl_attention(
-                    supp_fts_student_flat,  # online features (student)
-                    supp_fts_teacher_flat   # target features (teacher)
+                enhanced_supp_fts_teacher, enhanced_supp_fts_student, attention_weights = self.ssl_attention(
+                    supp_fts_teacher_flat,  # online features (teacher, gradient-updated)
+                    supp_fts_student_flat   # target features (student, momentum-updated)
                     # Note: Masks disabled temporarily to debug shape issues
                     # online_mask=binary_fg_msk_student_flat,  # optional mask for online
                     # target_mask=binary_fg_msk_teacher_flat   # optional mask for target
                 )
             else:
                 # Use original features without attention
-                enhanced_supp_fts_student = supp_fts_student_flat
                 enhanced_supp_fts_teacher = supp_fts_teacher_flat
+                enhanced_supp_fts_student = supp_fts_student_flat
                 attention_weights = None
             
             # Calculate TRUE self-supervised contrastive loss WITHOUT organ class information

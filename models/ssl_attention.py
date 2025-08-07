@@ -171,10 +171,10 @@ class SSLAttentionModule(nn.Module):
         Apply attention mechanism to support features before contrastive learning.
         
         Args:
-            online_features: [B, C, H, W] - online encoder support features
-            target_features: [B, C, H, W] - target encoder support features
-            online_mask: Optional mask for online features
-            target_mask: Optional mask for target features
+            online_features: [B, C, H, W] - online encoder support features (teacher, gradient-updated)
+            target_features: [B, C, H, W] - target encoder support features (student, momentum-updated)
+            online_mask: Optional mask for online features (teacher)
+            target_mask: Optional mask for target features (student)
             
         Returns:
             tuple: (enhanced_online_features, enhanced_target_features, attention_weights)
