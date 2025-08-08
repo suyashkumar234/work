@@ -48,21 +48,38 @@ class FewShotSeg(nn.Module):
             temperature=self.temperature
         )
         
-        # SSL Attention Module for online-target feature interaction
+        # SSL Attention Modules for online-target feature interaction
         # Feature dimension from ResNet101 encoder is 256 (after localconv)
-        self.use_ssl_attention = self.config.get('use_ssl_attention', True)
+        self.use_ssl_attention = self.config.get('use_ssl_attention', False)
+        self.use_mask_attention = self.config.get('use_mask_attention', False)
+        
+        # Initialize SSL attention if enabled
         if self.use_ssl_attention:
             self.ssl_attention = SSLAttentionModule(
                 feature_dim=256, 
-                n_heads=self.config.get('ssl_attention_heads', 8), 
+                n_heads=self.config.get('ssl_attention_heads', 4), 
                 dropout=self.config.get('ssl_attention_dropout', 0.1), 
                 n_layers=self.config.get('ssl_attention_layers', 1)
             )
+        
+        # Initialize mask attention if enabled
+        if self.use_mask_attention:
+            self.mask_attention = FeatureMaskAttention(
+                feature_dim=256,
+                n_heads=self.config.get('ssl_attention_heads', 4),
+                dropout=self.config.get('ssl_attention_dropout', 0.1)
+            )
+        
+        # Validation: Only one attention type should be active
+        if self.use_ssl_attention and self.use_mask_attention:
+            print("⚠️  WARNING: Both SSL and Mask attention are enabled. Using SSL attention only.")
+            self.use_mask_attention = False
 
     def get_encoder(self, in_channels):
         # if self.config['which_model'] == 'deeplab_res101':
         # if self.config['which_model'] == 'dlfcn_res101':
         use_coco_init = self.config['use_coco_init']
+        
         self.teacher_encoder = TVDeeplabRes101Encoder(use_coco_init)
         self.student_encoder = TVDeeplabRes101Encoder(use_coco_init)
 
@@ -251,21 +268,29 @@ class FewShotSeg(nn.Module):
             binary_fg_msk_teacher_flat = binary_fg_msk_teacher.view(-1, *binary_fg_msk_teacher.shape[-2:])  # (B, H, W)
             binary_fg_msk_student_flat = binary_fg_msk_student.view(-1, *binary_fg_msk_student.shape[-2:])  # (B, H, W)
             
-            # Apply SSL Attention before contrastive loss (if enabled)
+            # Apply attention before contrastive loss (if enabled)
             if self.use_ssl_attention:
-                # Self-attention on both encoders + cross-attention between them
+                # Use SSL attention (self + cross attention)
                 enhanced_supp_fts_teacher, enhanced_supp_fts_student, attention_weights = self.ssl_attention(
                     supp_fts_teacher_flat,  # online features (teacher, gradient-updated)
                     supp_fts_student_flat   # target features (student, momentum-updated)
-                    # Note: Masks disabled temporarily to debug shape issues
-                    # online_mask=binary_fg_msk_student_flat,  # optional mask for online
-                    # target_mask=binary_fg_msk_teacher_flat   # optional mask for target
                 )
+                print("🔍 Using SSL Attention (self + cross attention)")
+            elif self.use_mask_attention:
+                # Use mask-aware attention with foreground masks
+                enhanced_supp_fts_teacher, enhanced_supp_fts_student, attention_weights = self.mask_attention(
+                    supp_fts_teacher_flat,  # online features (teacher, gradient-updated)  
+                    supp_fts_student_flat,  # target features (student, momentum-updated)
+                    binary_fg_msk_teacher_flat,  # teacher foreground mask
+                    binary_fg_msk_student_flat   # student foreground mask
+                )
+                print("🎯 Using Mask Attention (foreground-focused)")
             else:
                 # Use original features without attention
                 enhanced_supp_fts_teacher = supp_fts_teacher_flat
                 enhanced_supp_fts_student = supp_fts_student_flat
                 attention_weights = None
+                print("⚪ Using Simple Model (no attention)")
             
             # Calculate TRUE self-supervised contrastive loss WITHOUT organ class information
             # Use attention-enhanced features for contrastive learning

@@ -46,7 +46,7 @@ def cfg():
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 250  # More frequent updates for shorter runs
+    print_interval = 10  # More frequent updates for shorter runs
     save_snapshot_every = 12500  # More frequent saves
     max_iters_per_load = 500  # Reduced for M1 Mac
     scan_per_load = -1 # Load entire dataset if memory allows
@@ -81,10 +81,16 @@ def cfg():
     superpix_scale = 'MIDDLE'
     
     # SSL Attention Configuration
-    use_ssl_attention = False  # Enable/disable SSL attention module (temporarily disabled for debugging)
+    use_ssl_attention = False  # Enable/disable SSL attention module (self + cross attention)
+    use_mask_attention = False  # Enable/disable mask-aware attention (foreground-focused)
     ssl_attention_heads = 4   # Number of attention heads (reduced for compatibility)
     ssl_attention_layers = 1  # Number of attention layers
     ssl_attention_dropout = 0.1  # Attention dropout rate
+    
+    # NOTE: Only one attention type should be True at a time:
+    # - Both False: Simple model without attention
+    # - use_ssl_attention=True: SSL self + cross attention
+    # - use_mask_attention=True: Mask-aware attention
 
     tversky_params = {'tversky_alpha' : 0.3,
                     'tversky_beta' : 0.7,
@@ -103,6 +109,7 @@ def cfg():
         'feature_hw': feature_hw,
         'reload_model_path': reload_model_path,
         'use_ssl_attention': use_ssl_attention,
+        'use_mask_attention': use_mask_attention,
         'ssl_attention_heads': ssl_attention_heads,
         'ssl_attention_layers': ssl_attention_layers,
         'ssl_attention_dropout': ssl_attention_dropout,
