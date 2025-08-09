@@ -135,16 +135,15 @@ class CircularList(list):
     Helper for spliting training and validation scans
     Originally: https://stackoverflow.com/questions/8951020/pythonic-circular-list/8951224
     """
-    def __getitem__(self, x):
-        if isinstance(x, slice):
-            return [self[x] for x in self._rangeify(x)]
-
-        index = operator.index(x)
-        try:
+    def __getitem__(self, index):
+    # Add check for empty list
+        if len(self) == 0:
+            raise IndexError('Cannot access items from empty list')
+    
+        if isinstance(index, slice):
+            return [self[x] for x in self._rangeify(index)]
+        else:
             return super().__getitem__(index % len(self))
-        except ZeroDivisionError:
-            raise IndexError('list index out of range')
-
     def _rangeify(self, slice):
         start, stop, step = slice.start, slice.stop, slice.step
         if start is None:

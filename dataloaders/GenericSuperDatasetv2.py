@@ -102,6 +102,9 @@ class SuperpixelDataset(BaseDataset):
         if len(exclude_list) > 0:
             print(f'###### Dataset: the following classes has been excluded {exclude_list}######')
         self.idx_split = idx_split
+        if len(self.img_pids) == 0:
+            raise ValueError(f"No images found after excluding classes {exclude_list}. Check your dataset path: {getattr(self, 'data_dir', 'unknown')}")
+
         self.scan_ids = self.get_scanids(mode, idx_split) # patient ids of the entire fold
         self.min_fg = min_fg if isinstance(min_fg, str) else str(min_fg)
         self.scan_per_load = scan_per_load

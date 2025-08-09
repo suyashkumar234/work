@@ -62,7 +62,7 @@ def get_normalize_op(modality, fids):
 
     if modality == "MR":
         def MR_normalize(x_in):
-            return (x_in - x_in.mean()) / x_in.std()
+            return (x_in - x_in.mean()) / x_in.std(), x_in.mean(), x_in.std()
         return MR_normalize
     elif modality == "CT":
         ct_mean, ct_std = get_CT_statistics(fids)

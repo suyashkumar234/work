@@ -44,16 +44,13 @@ os.environ['TORCH_HOME'] = "./pretrained_model" # sets an environment variable t
 @ex.automain # decorator
 def main(_run, _config, _log): # code according to sacred xperimental framework setup _run: Sacred's run object that tracks the experiment
 # _config: Contains all configuration parameters
-# _log: Sacred's logger object
     if _run.observers:
         os.makedirs(f'{_run.observers[0].dir}/snapshots', exist_ok=True)
         os.makedirs(f'{_run.observers[0].dir}/trainsnaps', exist_ok=True)
         for source_file, _ in _run.experiment_info['sources']:
-            os.makedirs(os.path.dirname(f'{_run.observers[0].dir}/source/{source_file}'),
-                        exist_ok=True)# exist_ok=True: Won't crash if directories already exist
+            os.makedirs(os.path.dirname(f"{_run.observers[0].dir}/source/{source_file}"), exist_ok=True)
             _run.observers[0].save_file(source_file, f'source/{source_file}')
-        shutil.rmtree(f'{_run.observers[0].basedir}/_sources')
-
+        shutil.rmtree(f'{_run.observers[0].basedir}/_sources', ignore_errors=True)
     set_seed(_config['seed']) # setting up random seed 
     cudnn.enabled = True
     cudnn.benchmark = True
@@ -242,7 +239,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             query_loss = criterion(query_pred, query_labels) #+ get_tversky_loss(query_pred.argmax(dim = 1, keepdim = True), query_labels[None, ...], 0.3, 0.7 ,1.0)
             query_weight=1.0
             align_weight=1.0
-            contrastive_weight=0.05
+            contrastive_weight=1.0
             # print(f'Query_weight-{query_weight}')
             # print(f'Align_weight-{align_weight}')
             # print(f'Contrastive_weight-{contrastive_weight}')
