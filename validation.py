@@ -14,9 +14,9 @@ import numpy as np
 
 from models.grid_proto_fewshot import FewShotSeg
 
-from dataloaders.dev_customized_medv1 import med_fewshot_val
-from dataloaders.ManualAnnoDatasetv1 import ManualAnnoDataset
-from dataloaders.GenericSuperDatasetv1 import SuperpixelDataset
+from dataloaders.dev_customized_med import med_fewshot_val
+from dataloaders.ManualAnnoDatasetv2 import ManualAnnoDataset
+from dataloaders.GenericSuperDatasetv2 import SuperpixelDataset
 from dataloaders.dataset_utils import DATASET_INFO, get_normalize_op
 from dataloaders.niftiio import convert_to_sitk
 
@@ -32,7 +32,7 @@ import tqdm
 import SimpleITK as sitk
 from torchvision.utils import make_grid
 
-from models.agun_model import AGUNet
+#from models.agun_model import AGUNet
 
 # config pre-trained model caching path
 os.environ['TORCH_HOME'] = "./pretrained_model"
@@ -205,7 +205,7 @@ def main(_run, _config, _log):
                     # plt.show()
                     # print(len(sup_img_part),len(sup_img_part[0]),len(sup_img_part[0][0]),sup_img_part[0][0].shape,sup_img_part[0][0][0].shape)
 
-                    query_pred, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
+                    query_pred, _, _, _, _ = model( sup_img_part , sup_fgm_part, sup_bgm_part, query_images, isval = True, val_wsize = _config["val_wsize"] )
 
                     # print(query_pred.cpu().numpy().shape,query_labels.cpu().numpy().shape)
                     # print(query_pred.min(), query_pred.max()) #/3)**0.5)
