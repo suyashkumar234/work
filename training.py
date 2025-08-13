@@ -254,7 +254,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             query_loss = criterion(query_pred, query_labels) #+ get_tversky_loss(query_pred.argmax(dim = 1, keepdim = True), query_labels[None, ...], 0.3, 0.7 ,1.0)
             query_weight=1.0
             align_weight=1.0
-            contrastive_weight=0.05
+            contrastive_weight=1.0
             # print(f'Query_weight-{query_weight}')
             # print(f'Align_weight-{align_weight}')
             # print(f'Contrastive_weight-{contrastive_weight}')
