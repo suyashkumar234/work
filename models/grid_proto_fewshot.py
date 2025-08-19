@@ -11,6 +11,7 @@ from .alpmodule import MultiProtoAsConv
 from .alpmodule2 import MultiProtoAsWCos
 from .contrastive import ContrastiveLoss
 from .ssl_attention import SSLAttentionModule, FeatureMaskAttention
+from .iterative_hard_mining import IterativeHardMiningModule
 from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
 # DEBUG
 from util.utils import get_tversky_loss
@@ -52,6 +53,7 @@ class FewShotSeg(nn.Module):
         # Feature dimension from ResNet101 encoder is 256 (after localconv)
         self.use_ssl_attention = self.config.get('use_ssl_attention', False)
         self.use_mask_attention = self.config.get('use_mask_attention', False)
+        self.use_iterative_mining = self.config.get('use_iterative_mining', False)
         
         # Initialize SSL attention if enabled
         if self.use_ssl_attention:
@@ -69,11 +71,27 @@ class FewShotSeg(nn.Module):
                 n_heads=self.config.get('ssl_attention_heads', 4),
                 dropout=self.config.get('ssl_attention_dropout', 0.1)
             )
+            
+        # Initialize iterative hard mining if enabled
+        if self.use_iterative_mining:
+            self.iterative_mining = IterativeHardMiningModule(
+                feature_dim=256,
+                n_iterations=self.config.get('mining_iterations', 3),
+                n_heads=self.config.get('ssl_attention_heads', 4),
+                dropout=self.config.get('ssl_attention_dropout', 0.1),
+                error_threshold=self.config.get('mining_error_threshold', 0.5),
+                mining_strength=self.config.get('mining_strength', 0.8)
+            )
         
         # Validation: Only one attention type should be active
-        if self.use_ssl_attention and self.use_mask_attention:
-            print("⚠️  WARNING: Both SSL and Mask attention are enabled. Using SSL attention only.")
-            self.use_mask_attention = False
+        active_modes = sum([self.use_ssl_attention, self.use_mask_attention, self.use_iterative_mining])
+        if active_modes > 1:
+            print(f"⚠️  WARNING: Multiple attention modes enabled. Using priority: iterative_mining > ssl_attention > mask_attention")
+            if self.use_iterative_mining:
+                self.use_ssl_attention = False
+                self.use_mask_attention = False
+            elif self.use_ssl_attention:
+                self.use_mask_attention = False
 
     def get_encoder(self, in_channels):
         # if self.config['which_model'] == 'deeplab_res101':
@@ -269,7 +287,27 @@ class FewShotSeg(nn.Module):
             binary_fg_msk_student_flat = binary_fg_msk_student.view(-1, *binary_fg_msk_student.shape[-2:])  # (B, H, W)
             
             # Apply attention before contrastive loss (if enabled)
-            if self.use_ssl_attention:
+            mining_history = None
+            if self.use_iterative_mining:
+                # Use iterative hard sample mining with attention refinement
+                # Generate initial prediction for hard sample detection
+                initial_pred = self._generate_initial_prediction(supp_fts_teacher_flat, binary_fg_msk_teacher_flat)
+                
+                enhanced_supp_fts_teacher, enhanced_supp_fts_student, mining_history = self.iterative_mining(
+                    supp_fts_teacher_flat,  # online features (teacher, gradient-updated)
+                    supp_fts_student_flat,  # target features (student, momentum-updated)
+                    initial_pred,           # initial prediction for hard sample detection
+                    binary_fg_msk_teacher_flat  # ground truth mask for mining
+                )
+                print("🔥 Using Iterative Hard Mining with Attention")
+                
+                # Print mining statistics
+                if mining_history and mining_history['hard_positive_counts']:
+                    total_hard_pos = sum(mining_history['hard_positive_counts'])
+                    total_hard_neg = sum(mining_history['hard_negative_counts'])
+                    print(f"   📊 Mining Stats: {total_hard_pos} hard positives, {total_hard_neg} hard negatives across {len(mining_history['iterations'])} iterations")
+                
+            elif self.use_ssl_attention:
                 # Use SSL attention (self + cross attention)
                 enhanced_supp_fts_teacher, enhanced_supp_fts_student, attention_weights = self.ssl_attention(
                     supp_fts_teacher_flat,  # online features (teacher, gradient-updated)
@@ -354,7 +392,7 @@ class FewShotSeg(nn.Module):
         bg_sim_maps    = torch.stack(bg_sim_maps, dim = 1) if show_viz else None
         fg_sim_maps    = torch.stack(fg_sim_maps, dim = 1) if show_viz else None
 
-        return output, align_loss / sup_bsize, [bg_sim_maps, fg_sim_maps], assign_maps, contrastive_loss
+        return output, align_loss / sup_bsize, [bg_sim_maps, fg_sim_maps], assign_maps, contrastive_loss, mining_history
 
 
 
@@ -426,6 +464,55 @@ class FewShotSeg(nn.Module):
                 #loss.append( get_tversky_loss(supp_pred.argmax(dim = 1, keepdim = True), supp_label[None, ...], 0.3, 0.7 ,1.0) / n_shots / n_ways)
 
         return torch.sum( torch.stack(loss))
+
+    def _generate_initial_prediction(self, features, ground_truth_mask):
+        """
+        Generate initial prediction from features for hard sample mining
+        
+        Args:
+            features: [B, C, H, W] - feature maps
+            ground_truth_mask: [B, H, W] - ground truth mask for guidance
+            
+        Returns:
+            initial_pred: [B, H, W] - initial prediction probabilities
+        """
+        B, C, H, W = features.shape
+        
+        # Simple initial prediction based on feature similarity to ground truth regions
+        # This is a placeholder - in practice you'd use your segmentation head
+        
+        # Compute feature mean over channels
+        feature_mean = torch.mean(features, dim=1)  # [B, H, W]
+        
+        # Normalize features
+        feature_norm = torch.norm(feature_mean.view(B, -1), dim=1, keepdim=True)  # [B, 1]
+        normalized_features = feature_mean.view(B, -1) / (feature_norm + 1e-8)  # [B, H*W]
+        normalized_features = normalized_features.view(B, H, W)  # [B, H, W]
+        
+        # Use ground truth guidance for initial prediction
+        # Areas similar to foreground regions get higher probability
+        fg_mean = []
+        for b in range(B):
+            fg_mask = ground_truth_mask[b] > 0.5
+            if fg_mask.sum() > 0:
+                fg_feat_mean = normalized_features[b][fg_mask].mean()
+                fg_mean.append(fg_feat_mean)
+            else:
+                fg_mean.append(torch.tensor(0.5, device=features.device))
+        
+        fg_mean = torch.stack(fg_mean).view(B, 1, 1)  # [B, 1, 1]
+        
+        # Compute similarity to foreground
+        similarity = torch.cosine_similarity(
+            normalized_features.unsqueeze(-1), 
+            fg_mean.unsqueeze(-1), 
+            dim=-1
+        )  # [B, H, W]
+        
+        # Convert to probability
+        initial_pred = torch.sigmoid(similarity * 2.0)  # Scale and sigmoid
+        
+        return initial_pred
 
 
 

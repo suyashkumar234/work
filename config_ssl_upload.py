@@ -83,14 +83,21 @@ def cfg():
     # SSL Attention Configuration
     use_ssl_attention = False  # Enable/disable SSL attention module (self + cross attention)
     use_mask_attention = False  # Enable/disable mask-aware attention (foreground-focused)
+    use_iterative_mining = False  # Enable/disable iterative hard sample mining with attention
     ssl_attention_heads = 4   # Number of attention heads (reduced for compatibility)
     ssl_attention_layers = 1  # Number of attention layers
     ssl_attention_dropout = 0.1  # Attention dropout rate
     
+    # Iterative Hard Mining Configuration
+    mining_iterations = 3  # Number of iterative mining iterations
+    mining_error_threshold = 0.5  # Threshold for hard sample detection
+    mining_strength = 0.8  # Blending strength for feature refinement (0.0-1.0)
+    
     # NOTE: Only one attention type should be True at a time:
-    # - Both False: Simple model without attention
+    # - All False: Simple model without attention
     # - use_ssl_attention=True: SSL self + cross attention
-    # - use_mask_attention=True: Mask-aware attention
+    # - use_mask_attention=True: Mask-aware attention  
+    # - use_iterative_mining=True: Iterative hard sample mining with attention refinement
 
     tversky_params = {'tversky_alpha' : 0.3,
                     'tversky_beta' : 0.7,
@@ -110,9 +117,13 @@ def cfg():
         'reload_model_path': reload_model_path,
         'use_ssl_attention': use_ssl_attention,
         'use_mask_attention': use_mask_attention,
+        'use_iterative_mining': use_iterative_mining,
         'ssl_attention_heads': ssl_attention_heads,
         'ssl_attention_layers': ssl_attention_layers,
         'ssl_attention_dropout': ssl_attention_dropout,
+        'mining_iterations': mining_iterations,
+        'mining_error_threshold': mining_error_threshold,
+        'mining_strength': mining_strength,
     }
 
     task = {
