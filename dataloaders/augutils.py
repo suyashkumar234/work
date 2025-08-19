@@ -8,6 +8,7 @@ import numpy as np
 import torchvision.transforms as deftfx
 import dataloaders.image_transforms as myit
 import copy
+import torch.nn.functional as F
 
 sabs_aug = {
         # turn flipping off as medical data has fixed orientations
@@ -195,4 +196,149 @@ def transform_with_label(aug):
         return t_img, t_label
 
     return transform
+
+def random_crop_support_student(support_images, support_masks, crop_scale=(0.7, 0.9), crop_prob=0.5):
+    """
+    Apply random crop augmentation to student/target encoder support images and masks.
+    
+    Args:
+        support_images: List of support images [way x shot x [B x C x H x W]]
+        support_masks: List of foreground/background masks [way x shot x [B x 1 x H x W]]
+        crop_scale: Tuple of (min_scale, max_scale) for crop size as fraction of original
+        crop_prob: Probability of applying crop (0.0 to 1.0)
+        
+    Returns:
+        cropped_images: Same structure as input but with random crops applied
+        cropped_masks: Corresponding cropped masks
+    """
+    if np.random.rand() > crop_prob:
+        # No cropping, return original
+        return support_images, support_masks
+    
+    cropped_images = []
+    cropped_masks = []
+    
+    for way_imgs, way_masks in zip(support_images, support_masks):
+        cropped_way_imgs = []
+        cropped_way_masks = []
+        
+        for shot_imgs, shot_masks in zip(way_imgs, way_masks):
+            B, C, H, W = shot_imgs.shape
+            
+            # Generate random crop parameters (same for all items in this shot)
+            scale = np.random.uniform(crop_scale[0], crop_scale[1])
+            crop_h = int(H * scale)
+            crop_w = int(W * scale)
+            
+            # Random top-left corner
+            top = np.random.randint(0, H - crop_h + 1)
+            left = np.random.randint(0, W - crop_w + 1)
+            
+            # Crop images and resize back to original size
+            cropped_shot_imgs = shot_imgs[:, :, top:top+crop_h, left:left+crop_w]
+            cropped_shot_imgs = F.interpolate(cropped_shot_imgs, size=(H, W), mode='bilinear', align_corners=False)
+            
+            # Crop masks and resize back to original size  
+            cropped_shot_masks = shot_masks[:, :, top:top+crop_h, left:left+crop_w]
+            cropped_shot_masks = F.interpolate(cropped_shot_masks, size=(H, W), mode='bilinear', align_corners=False)
+            
+            cropped_way_imgs.append(cropped_shot_imgs)
+            cropped_way_masks.append(cropped_shot_masks)
+            
+        cropped_images.append(cropped_way_imgs)
+        cropped_masks.append(cropped_way_masks)
+    
+    return cropped_images, cropped_masks
+
+
+def random_crop_support_student_v2(support_images, fore_masks, back_masks, crop_scale=(0.85, 0.95), crop_prob=0.3):
+    """
+    Apply random crop augmentation to student/target encoder support images and both fore/back masks.
+    Uses foreground-aware cropping to ensure valid crops.
+    
+    Args:
+        support_images: List of support images [way x shot x [B x C x H x W]]
+        fore_masks: List of foreground masks [way x shot x [B x H x W]]
+        back_masks: List of background masks [way x shot x [B x H x W]]  
+        crop_scale: Tuple of (min_scale, max_scale) for crop size as fraction of original
+        crop_prob: Probability of applying crop (0.0 to 1.0)
+        
+    Returns:
+        cropped_images: Same structure as input but with random crops applied
+        cropped_fore_masks: Corresponding cropped foreground masks
+        cropped_back_masks: Corresponding cropped background masks
+    """
+    if np.random.rand() > crop_prob:
+        # No cropping, return originals
+        return support_images, fore_masks, back_masks
+    
+    cropped_images = []
+    cropped_fore_masks = []
+    cropped_back_masks = []
+    
+    for way_idx in range(len(support_images)):
+        way_imgs = support_images[way_idx]
+        way_fore_masks = fore_masks[way_idx]
+        way_back_masks = back_masks[way_idx]
+        
+        cropped_way_imgs = []
+        cropped_way_fore_masks = []
+        cropped_way_back_masks = []
+        
+        for shot_idx in range(len(way_imgs)):
+            shot_imgs = way_imgs[shot_idx]  # [B x C x H x W]
+            shot_fore_masks = way_fore_masks[shot_idx]  # [B x H x W]  
+            shot_back_masks = way_back_masks[shot_idx]  # [B x H x W]
+            
+            B, C, H, W = shot_imgs.shape
+            
+            # Use simple center crop with small random offset to preserve foreground
+            # This is much safer than bounding box approach
+            
+            # Generate crop size (very conservative)
+            scale = np.random.uniform(crop_scale[0], crop_scale[1])
+            crop_h = int(H * scale)
+            crop_w = int(W * scale)
+            
+            # Center crop with small random offset
+            center_y, center_x = H // 2, W // 2
+            offset_range = min(20, (H - crop_h) // 4, (W - crop_w) // 4)  # Small offset
+            
+            if offset_range > 0:
+                offset_y = np.random.randint(-offset_range, offset_range + 1)
+                offset_x = np.random.randint(-offset_range, offset_range + 1)
+            else:
+                offset_y, offset_x = 0, 0
+            
+            # Calculate crop coordinates
+            top = max(0, min(H - crop_h, center_y - crop_h // 2 + offset_y))
+            left = max(0, min(W - crop_w, center_x - crop_w // 2 + offset_x))
+            
+            # Crop images and resize back to original size
+            cropped_shot_imgs = shot_imgs[:, :, top:top+crop_h, left:left+crop_w]
+            cropped_shot_imgs = F.interpolate(cropped_shot_imgs, size=(H, W), mode='bilinear', align_corners=False)
+            
+            # Crop foreground masks and resize back to original size
+            shot_fore_masks_4d = shot_fore_masks.unsqueeze(1)  # [B x 1 x H x W]
+            cropped_fore_4d = shot_fore_masks_4d[:, :, top:top+crop_h, left:left+crop_w]
+            cropped_fore_4d = F.interpolate(cropped_fore_4d, size=(H, W), mode='bilinear', align_corners=False)
+            # Apply threshold to restore binary mask after bilinear interpolation
+            cropped_shot_fore_masks = (cropped_fore_4d > 0.5).float().squeeze(1)  # [B x H x W]
+            
+            # Crop background masks and resize back to original size
+            shot_back_masks_4d = shot_back_masks.unsqueeze(1)  # [B x 1 x H x W]
+            cropped_back_4d = shot_back_masks_4d[:, :, top:top+crop_h, left:left+crop_w]
+            cropped_back_4d = F.interpolate(cropped_back_4d, size=(H, W), mode='bilinear', align_corners=False)
+            # Apply threshold to restore binary mask after bilinear interpolation
+            cropped_shot_back_masks = (cropped_back_4d > 0.5).float().squeeze(1)  # [B x H x W]
+            
+            cropped_way_imgs.append(cropped_shot_imgs)
+            cropped_way_fore_masks.append(cropped_shot_fore_masks)
+            cropped_way_back_masks.append(cropped_shot_back_masks)
+            
+        cropped_images.append(cropped_way_imgs)
+        cropped_fore_masks.append(cropped_way_fore_masks)
+        cropped_back_masks.append(cropped_way_back_masks)
+    
+    return cropped_images, cropped_fore_masks, cropped_back_masks
 

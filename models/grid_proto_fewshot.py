@@ -11,6 +11,7 @@ from .alpmodule import MultiProtoAsConv
 from .alpmodule2 import MultiProtoAsWCos
 from .contrastive import ContrastiveLoss
 from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
+from dataloaders.augutils import random_crop_support_student_v2
 # DEBUG
 from util.utils import get_tversky_loss
 from pdb import set_trace
@@ -128,16 +129,31 @@ class FewShotSeg(nn.Module):
         # fore_mask = torch.autograd.Variable(fore_mask, requires_grad = True)
         # back_mask = torch.stack([torch.stack(way, dim=0)
         #                          for way in back_mask], dim=0)  # Wa x Sh x B x H' x W'
-        
+        # Apply random crop augmentation to student support images during training
+        if self.training:
+            # Apply random crop to student support images and masks
+            supp_imgs_student_cropped, fore_mask_student_cropped, back_mask_student_cropped = random_crop_support_student_v2(
+                supp_imgs, fore_mask, back_mask, 
+                crop_scale=(0.8, 0.95), crop_prob=0.3
+            )
+            #print("🌾 Applied random crop augmentation to student support images")
+        else:
+            # During validation, use original images
+            supp_imgs_student_cropped = supp_imgs
+            fore_mask_student_cropped = fore_mask  
+            back_mask_student_cropped = back_mask
 
+        # Teacher uses original images, student uses cropped images
         imgs_concat_teacher = torch.cat([torch.cat(way, dim=0) for way in supp_imgs]
                                 + [torch.cat(qry_imgs, dim=0),], dim=0)
 
-        imgs_concat_student = torch.cat([torch.cat(way, dim=0) for way in supp_imgs]
+        imgs_concat_student = torch.cat([torch.cat(way, dim=0) for way in supp_imgs_student_cropped]
                                 + [torch.cat(qry_imgs, dim=0),], dim=0)
 
-        # ASSERTION: Ensure the same images are passed to both teacher and student encoders
-        assert torch.allclose(imgs_concat_teacher, imgs_concat_student), "Teacher and student received different images!"
+        # Note: Teacher and student now receive different support images (original vs cropped)
+
+        
+        
 
         img_fts_teacher = self.teacher_encoder(imgs_concat_teacher, low_level = False)
         img_fts_student = self.student_encoder(imgs_concat_student, low_level = False)
@@ -151,12 +167,13 @@ class FewShotSeg(nn.Module):
         qry_fts_teacher = img_fts_teacher[n_ways * n_shots * sup_bsize:].view(n_queries, qry_bsize, -1, *fts_size)
         qry_fts_student = img_fts_student[n_ways * n_shots * sup_bsize:].view(n_queries, qry_bsize, -1, *fts_size)
 
+        # Use original masks for teacher, cropped masks for student  
         fore_mask_teacher = torch.stack([torch.stack(way, dim=0) for way in fore_mask], dim=0)
-        fore_mask_student = torch.stack([torch.stack(way, dim=0) for way in fore_mask], dim=0)
+        fore_mask_student = torch.stack([torch.stack(way, dim=0) for way in fore_mask_student_cropped], dim=0)
         #fore_mask_teacher = torch.autograd.Variable(fore_mask_teacher, requires_grad = True)
         #fore_mask_student = torch.autograd.Variable(fore_mask_student,rquired_grad=True)
         back_mask_teacher = torch.stack([torch.stack(way, dim=0) for way in back_mask], dim=0)
-        back_mask_student = torch.stack([torch.stack(way, dim=0) for way in back_mask], dim=0)
+        back_mask_student = torch.stack([torch.stack(way, dim=0) for way in back_mask_student_cropped], dim=0)
 
         # self.update_student_encoder(self.student_encoder)
 

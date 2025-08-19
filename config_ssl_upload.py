@@ -35,7 +35,7 @@ def cfg():
     seed = 1234
     gpu_id = 0  # Will be ignored on M1 Mac, kept for compatibility
     mode = 'train'  # Changed to test mode for validation
-    dataset = 'CHAOST2_Superpix'
+    dataset = 'SABS_Superpix'
     use_coco_init = True
     # Optimized for M1 Mac
     num_workers = 8 # M1 has good CPU cores, but don't oversubscribe
@@ -47,7 +47,7 @@ def cfg():
     #lr_milestones = [50000, 100000, 150000, 200000, 250000]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 20000  # More frequent updates for shorter runs
+    print_interval = 5000  # More frequent updates for shorter runs
     save_snapshot_every = 25000  # More frequent saves
     max_iters_per_load = 1000  # Reduced for M1 Mac
     scan_per_load = -1 # Load entire dataset if memory allows
@@ -119,7 +119,7 @@ def cfg():
 
     exp_str = '_'.join([
         exp_prefix,
-        f'sets_{label_sets}',
+        f'_crop_sets_SABS{label_sets}',
         f'{task["n_shots"]}shot',
         f'fold_{eval_fold}'  # Add fold information
                 ])

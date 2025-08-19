@@ -85,19 +85,24 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
           # Compute row-wise average of positive similarities instead of using diagonal
           pos_sim_avg = torch.mean(pos_sim, dim=1, keepdim=True)  # (N_fg_online, 1)
 
-          # For InfoNCE, create similarity matrix where each row represents
-          # one averaged positive pair and multiple negative pairs
-          logits_online = torch.cat([pos_sim_avg, neg_sim_online], dim=1)  # (N_fg_online, 1 + num_neg)
+          # Handle different batch sizes between teacher and student due to augmentation
+          if fg_feat_online.shape[0] == 0 or fg_feat_target.shape[0] == 0:
+              # Handle empty batches due to aggressive cropping
+              loss_online = torch.tensor(0.0, device=feat_online.device, requires_grad=True)
+          else:
+              # For InfoNCE, create similarity matrix where each row represents
+              # one averaged positive pair and multiple negative pairs
+              logits_online = torch.cat([pos_sim_avg, neg_sim_online], dim=1)  # (N_fg_online, 1 + num_neg)
 
-          # Create labels for InfoNCE (the positive pair is now at index 0)
-          labels_online = torch.zeros(fg_feat_online.shape[0], device=feat_online.device, dtype=torch.long)
+              # If we have more online foreground pixels than target, truncate
+              if fg_feat_online.shape[0] > fg_feat_target.shape[0]:
+                  logits_online = logits_online[:fg_feat_target.shape[0]]
+                  labels_online = torch.zeros(fg_feat_target.shape[0], device=feat_online.device, dtype=torch.long)
+              else:
+                  labels_online = torch.zeros(fg_feat_online.shape[0], device=feat_online.device, dtype=torch.long)
 
-          # If we have more online foreground pixels than target, truncate
-          if fg_feat_online.shape[0] > fg_feat_target.shape[0]:
-              logits_online = logits_online[:fg_feat_target.shape[0]]
-
-          # Compute InfoNCE loss for online->target direction
-          loss_online = F.cross_entropy(logits_online, labels_online)
+              # Compute InfoNCE loss for online->target direction
+              loss_online = F.cross_entropy(logits_online, labels_online)
 
           # Check for NaN in loss_online
           if torch.isnan(loss_online) or torch.isinf(loss_online):
@@ -110,13 +115,20 @@ class SupervisedPixelWiseContrastiveLoss(nn.Module):
           # Compute row-wise average of transposed pos_sim for target direction
           pos_sim_avg_target = torch.mean(pos_sim.t(), dim=1, keepdim=True)  # (N_fg_target, 1)
 
-          logits_target = torch.cat([pos_sim_avg_target, neg_sim_target], dim=1)  # (N_fg_target, 1 + num_neg)
-          labels_target = torch.zeros(fg_feat_target.shape[0], device=feat_online.device, dtype=torch.long)
+          # Handle different batch sizes between teacher and student due to augmentation
+          if fg_feat_target.shape[0] == 0 or fg_feat_online.shape[0] == 0:
+              # Handle empty batches due to aggressive cropping
+              loss_target = torch.tensor(0.0, device=feat_online.device, requires_grad=True)
+          else:
+              logits_target = torch.cat([pos_sim_avg_target, neg_sim_target], dim=1)  # (N_fg_target, 1 + num_neg)
+              
+              if fg_feat_target.shape[0] > fg_feat_online.shape[0]:
+                  logits_target = logits_target[:fg_feat_online.shape[0]]
+                  labels_target = torch.zeros(fg_feat_online.shape[0], device=feat_online.device, dtype=torch.long)
+              else:
+                  labels_target = torch.zeros(fg_feat_target.shape[0], device=feat_online.device, dtype=torch.long)
 
-          if fg_feat_target.shape[0] > fg_feat_online.shape[0]:
-              logits_target = logits_target[:fg_feat_online.shape[0]]
-
-          loss_target = F.cross_entropy(logits_target, labels_target)
+              loss_target = F.cross_entropy(logits_target, labels_target)
 
           # Check for NaN in loss_target
           if torch.isnan(loss_target) or torch.isinf(loss_target):

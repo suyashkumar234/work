@@ -1,15 +1,15 @@
 #!/bin/bash
-# train a model to segment abdominal MRI 
+# train a model to segment abdominal CT 
 GPUID1=0
 export CUDA_VISIBLE_DEVICES=$GPUID1
 
 ####### Shared configs ######
 PROTO_GRID=8 # using 32 / 8 = 4, 4-by-4 prototype pooling window during training
 CPT="myexp"
-DATASET='CHAOST2_Superpix'
+DATASET='SABS_Superpix'
 NWORKER=4
 
-ALL_EV=( 4) # 5-fold cross validation (0, 1, 2, 3, 4)
+ALL_EV=( 0) # 5-fold cross validation (0, 1, 2, 3, 4)
 ALL_SCALE=( "MIDDLE") # config of pseudolabels
 
 ### Use L/R kidney as testing classes
@@ -18,9 +18,9 @@ EXCLU='[2,3]' # setting 2: excluding kidneies in training set to test generaliza
 
 ### Use Liver and spleen as testing classes
 # LABEL_SETS=1 
-# EXCLU='[1,4]' 
+# EXCLU='[1,6]' 
 
-###### Training configs (irrelavent in testing) ######
+###### Training configs ######
 NSTEP=100100
 DECAY=0.95
 
@@ -29,7 +29,7 @@ SNAPSHOT_INTERVAL=25000 # interval for saving snapshot
 SEED='1234'
 
 ###### Validation configs ######
-SUPP_ID='[4]'  # using the additionally loaded scan as support
+SUPP_ID='[6]' # using the additionally loaded scan as support
 
 echo ===================================
 
@@ -37,22 +37,19 @@ for EVAL_FOLD in "${ALL_EV[@]}"
 do
     for SUPERPIX_SCALE in "${ALL_SCALE[@]}"
     do
-    PREFIX="test_vfold${EVAL_FOLD}"
+    PREFIX="train_${DATASET}_lbgroup${LABEL_SETS}_scale_${SUPERPIX_SCALE}_vfold${EVAL_FOLD}"
     echo $PREFIX
-    LOGDIR="./exps/${CPT}"
+    LOGDIR="./exps/${CPT}_${SUPERPIX_SCALE}_${LABEL_SETS}"
 
     if [ ! -d $LOGDIR ]
     then
         mkdir $LOGDIR
     fi
 
-    RELOAD_PATH='/scratch/suyash.kumar.mec22.itbhu/cowpro/exps/mySSL___crop_sets_0_1shot_fold_4/1/snapshots/100000.pth' # path to the reloaded model
-
-    python3 validation.py with \
+    python3 training.py with \
     'modelname=dlfcn_res101' \
     'usealign=True' \
     'optim_type=sgd' \
-    reload_model_path=$RELOAD_PATH \
     num_workers=$NWORKER \
     scan_per_load=-1 \
     label_sets=$LABEL_SETS \
