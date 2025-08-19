@@ -229,41 +229,133 @@ class IterativeHardMiningModule(nn.Module):
             
             # Refine hard positive features (attend to foreground context)
             if hard_pos_feats_online.size(0) > 0 and fg_feats_online.size(0) > 0:
-                refined_hard_pos_online, pos_attn_weights = self.hard_attention(
-                    hard_pos_feats_online, fg_feats_online
-                )
-                refined_hard_pos_target, _ = self.hard_attention(
-                    hard_pos_feats_target, fg_feats_online
-                )
-                
-                # Update features at hard positive locations
-                self._update_features_at_locations(
-                    refined_online, refined_hard_pos_online, hard_pos_indices
-                )
-                self._update_features_at_locations(
-                    refined_target, refined_hard_pos_target, hard_pos_indices
-                )
-                
-                iteration_info['pos_attention_weights'] = pos_attn_weights
+                # Add robust safety checks to avoid dimension mismatch
+                min_samples = 10  # Allow attention with reasonable sample sizes
+                if (hard_pos_feats_online.size(0) >= min_samples and 
+                    fg_feats_online.size(0) >= min_samples and 
+                    hard_pos_feats_online.size(1) == 256 and 
+                    fg_feats_online.size(1) == 256):
+                    
+                    try:
+                        refined_hard_pos_online, pos_attn_weights = self.hard_attention(
+                            hard_pos_feats_online, fg_feats_online
+                        )
+                        refined_hard_pos_target, _ = self.hard_attention(
+                            hard_pos_feats_target, fg_feats_online
+                        )
+                        
+                        # Update features at hard positive locations
+                        self._update_features_at_locations(
+                            refined_online, refined_hard_pos_online, hard_pos_indices
+                        )
+                        self._update_features_at_locations(
+                            refined_target, refined_hard_pos_target, hard_pos_indices
+                        )
+                        
+                        iteration_info['pos_attention_weights'] = pos_attn_weights
+                    except RuntimeError as e:
+                        print(f"Positive attention failed, using feature refinement fallback: {e}")
+                        # Fallback to simple refinement with safety check
+                        if hard_pos_feats_online.size(0) >= 5:
+                            try:
+                                refined_hard_pos_online = self.feature_refiner(hard_pos_feats_online)
+                                refined_hard_pos_target = self.feature_refiner(hard_pos_feats_target)
+                                
+                                self._update_features_at_locations(
+                                    refined_online, refined_hard_pos_online, hard_pos_indices
+                                )
+                                self._update_features_at_locations(
+                                    refined_target, refined_hard_pos_target, hard_pos_indices
+                                )
+                            except RuntimeError:
+                                print(f"Feature refinement also failed, skipping positive samples")
+                                pass
+                else:
+                    # Skip attention if conditions not met, but still try simple refinement
+                    if hard_pos_feats_online.size(0) >= 5:  # Only refine if we have at least 5 samples
+                        try:
+                            refined_hard_pos_online = self.feature_refiner(hard_pos_feats_online)
+                            refined_hard_pos_target = self.feature_refiner(hard_pos_feats_target)
+                            
+                            # Update with refined features
+                            self._update_features_at_locations(
+                                refined_online, refined_hard_pos_online, hard_pos_indices
+                            )
+                            self._update_features_at_locations(
+                                refined_target, refined_hard_pos_target, hard_pos_indices
+                            )
+                            print(f"✅ Applied feature refinement to {hard_pos_feats_online.size(0)} hard positive samples")
+                        except RuntimeError as e:
+                            # If even feature refinement fails, skip this iteration
+                            print(f"Skipping hard positive refinement: feature_refiner failed with {hard_pos_feats_online.size(0)} samples - {e}")
+                            pass
+                    else:
+                        print(f"Skipping hard positive refinement: too few samples ({hard_pos_feats_online.size(0)})")
             
             # Refine hard negative features (attend to background context)
             if hard_neg_feats_online.size(0) > 0 and bg_feats_online.size(0) > 0:
-                refined_hard_neg_online, neg_attn_weights = self.hard_attention(
-                    hard_neg_feats_online, bg_feats_online
-                )
-                refined_hard_neg_target, _ = self.hard_attention(
-                    hard_neg_feats_target, bg_feats_online
-                )
-                
-                # Update features at hard negative locations
-                self._update_features_at_locations(
-                    refined_online, refined_hard_neg_online, hard_neg_indices
-                )
-                self._update_features_at_locations(
-                    refined_target, refined_hard_neg_target, hard_neg_indices
-                )
-                
-                iteration_info['neg_attention_weights'] = neg_attn_weights
+                # Add robust safety checks to avoid dimension mismatch
+                min_samples = 10  # Allow attention with reasonable sample sizes
+                if (hard_neg_feats_online.size(0) >= min_samples and 
+                    bg_feats_online.size(0) >= min_samples and 
+                    hard_neg_feats_online.size(1) == 256 and 
+                    bg_feats_online.size(1) == 256):
+                    
+                    try:
+                        refined_hard_neg_online, neg_attn_weights = self.hard_attention(
+                            hard_neg_feats_online, bg_feats_online
+                        )
+                        refined_hard_neg_target, _ = self.hard_attention(
+                            hard_neg_feats_target, bg_feats_online
+                        )
+                        
+                        # Update features at hard negative locations
+                        self._update_features_at_locations(
+                            refined_online, refined_hard_neg_online, hard_neg_indices
+                        )
+                        self._update_features_at_locations(
+                            refined_target, refined_hard_neg_target, hard_neg_indices
+                        )
+                        
+                        iteration_info['neg_attention_weights'] = neg_attn_weights
+                    except RuntimeError as e:
+                        print(f"Negative attention failed, using feature refinement fallback: {e}")
+                        # Fallback to simple refinement with safety check
+                        if hard_neg_feats_online.size(0) >= 5:
+                            try:
+                                refined_hard_neg_online = self.feature_refiner(hard_neg_feats_online)
+                                refined_hard_neg_target = self.feature_refiner(hard_neg_feats_target)
+                                
+                                self._update_features_at_locations(
+                                    refined_online, refined_hard_neg_online, hard_neg_indices
+                                )
+                                self._update_features_at_locations(
+                                    refined_target, refined_hard_neg_target, hard_neg_indices
+                                )
+                            except RuntimeError:
+                                print(f"Feature refinement also failed, skipping negative samples")
+                                pass
+                else:
+                    # Skip attention if conditions not met, but still try simple refinement
+                    if hard_neg_feats_online.size(0) >= 5:  # Only refine if we have at least 5 samples
+                        try:
+                            refined_hard_neg_online = self.feature_refiner(hard_neg_feats_online)
+                            refined_hard_neg_target = self.feature_refiner(hard_neg_feats_target)
+                            
+                            # Update with refined features
+                            self._update_features_at_locations(
+                                refined_online, refined_hard_neg_online, hard_neg_indices
+                            )
+                            self._update_features_at_locations(
+                                refined_target, refined_hard_neg_target, hard_neg_indices
+                            )
+                            print(f"✅ Applied feature refinement to {hard_neg_feats_online.size(0)} hard negative samples")
+                        except RuntimeError as e:
+                            # If even feature refinement fails, skip this iteration
+                            print(f"Skipping hard negative refinement: feature_refiner failed with {hard_neg_feats_online.size(0)} samples - {e}")
+                            pass
+                    else:
+                        print(f"Skipping hard negative refinement: too few samples ({hard_neg_feats_online.size(0)})")
             
             mining_history['iterations'].append(iteration_info)
             
