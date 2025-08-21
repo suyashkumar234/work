@@ -288,8 +288,8 @@ class FewShotSeg(nn.Module):
             
             # Apply attention before contrastive loss (if enabled)
             mining_history = None
-            if self.use_iterative_mining:
-                # Use iterative hard sample mining with attention refinement
+            if self.use_iterative_mining and not isval:
+                # Use iterative hard sample mining with attention refinement (ONLY during training)
                 # Generate initial prediction for hard sample detection
                 initial_pred = self._generate_initial_prediction(supp_fts_teacher_flat, binary_fg_msk_teacher_flat)
                 
@@ -299,13 +299,20 @@ class FewShotSeg(nn.Module):
                     initial_pred,           # initial prediction for hard sample detection
                     binary_fg_msk_teacher_flat  # ground truth mask for mining
                 )
-                print("🔥 Using Iterative Hard Mining with Attention")
+                print("🔥 Using Iterative Hard Mining with Attention (Training)")
                 
                 # Print mining statistics
                 if mining_history and mining_history['hard_positive_counts']:
                     total_hard_pos = sum(mining_history['hard_positive_counts'])
                     total_hard_neg = sum(mining_history['hard_negative_counts'])
                     print(f"   📊 Mining Stats: {total_hard_pos} hard positives, {total_hard_neg} hard negatives across {len(mining_history['iterations'])} iterations")
+                
+            elif self.use_iterative_mining and isval:
+                # Skip iterative mining during validation, use original features
+                enhanced_supp_fts_teacher = supp_fts_teacher_flat
+                enhanced_supp_fts_student = supp_fts_student_flat
+                mining_history = None
+                print("⚪ Skipping Iterative Hard Mining (Validation)")
                 
             elif self.use_ssl_attention:
                 # Use SSL attention (self + cross attention)
