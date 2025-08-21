@@ -244,7 +244,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             mean = sample_batched["mean"] if isinstance(sample_batched["mean"], list) else [sample_batched["mean"]]
             std = sample_batched["std"] if isinstance(sample_batched["std"], list) else [sample_batched["std"]]
             ########################################################################
-            query_pred, align_loss, debug_vis, assign_mats, contrastive_loss = model(support_images,
+            query_pred, align_loss, debug_vis, assign_mats, contrastive_loss, mining_history  = model(support_images,
                                                                            support_fg_mask,
                                                                            support_bg_mask,
                                                                            query_images,
