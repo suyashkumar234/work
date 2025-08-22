@@ -214,7 +214,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         for _, sample_batched in enumerate(trainloader): # trainloader is the dataloader defined in torch.utils.data , sample_batched is the batch of data
             # Prepare input
             i_iter += 1
-            print(f"Processing iteration {i_iter}", flush=True)  # Debug print
+           # print(f"Processing iteration {i_iter}", flush=True)  # Debug print
             # Modified to use device-agnostic approach
             # print("About to print sample_batched", flush=True)
             # print(sample_batched, flush=True) 

@@ -18,7 +18,7 @@ from datetime import datetime
 sacred.SETTINGS['CONFIG']['READ_ONLY_CONFIG'] = False
 sacred.SETTINGS.CAPTURE_MODE = 'no'
 
-ex = Experiment('mySSL')
+ex = Experiment('mySSL',save_git_info=False)
 ex.captured_out_filter = apply_backspaces_and_linefeeds
 
 source_folders = ['.', './dataloaders', './models', './util']
@@ -46,13 +46,13 @@ def cfg():
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 250  # More frequent updates for shorter runs
-    save_snapshot_every = 12500  # More frequent saves
+    print_interval = 10000  # More frequent updates for shorter runs
+    save_snapshot_every = 25000  # More frequent saves
     max_iters_per_load = 500  # Reduced for M1 Mac
     scan_per_load = -1 # Load entire dataset if memory allows
     which_aug = 'sabs_aug'
     input_size = (256, 256)  # Keep reasonable size for M1
-    min_fg_data='100'
+    min_fg_data='1'
     label_sets = 0
     exclude_cls_list = [2, 3]
     usealign = True
@@ -105,46 +105,48 @@ def cfg():
         'npart': n_sup_part 
     }
 
-    optim_type = 'adam'  # Adam often works better on M1
+    optim_type = 'sgd'
     optim = {
-        'lr': 5e-4,  # Slightly lower learning rate for stability
+        'lr': 1e-3, 
+        'momentum': 0.9,
         'weight_decay': 0.0005,
     }
 
-    exp_prefix = 'm1_mac'  # Identify M1 runs
+    exp_prefix = ''  # Identify M1 runs
 
-    exp_str = '_'.join(
-        [exp_prefix]
-        + [dataset,]
-        + [f'sets_{label_sets}_{task["n_shots"]}shot'])
+    exp_str = '_'.join([
+	exp_prefix,
+        f'simple_sets_{label_sets}',
+        f'{task["n_shots"]}shot',
+        f'fold_{eval_fold}'  # Add fold information
+                ])
 
     # Update paths for your system - replace with your actual data paths
     path = {
-        'log_dir': './runs',
-        'SABS':{'data_dir': "/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized"  # UPDATE THIS
+        'log_dir': './exps',
+        'SABS':{'data_dir': "/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/"  # UPDATE THIS
             },
-        'CHAOST2':{'data_dir': "/path/to/your/CHAOS/data"  # UPDATE THIS
+        'CHAOST2':{'data_dir': "/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized"  # UPDATE THIS
             },
-        'SABS_Superpix':{'data_dir': "/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized"},  # UPDATE THIS
-        'CHAOST2_Superpix':{'data_dir': "/path/to/your/CHAOS/data"},  # UPDATE THIS
+        'SABS_Superpix':{'data_dir': "/home/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/"},  # UPDATE THIS
+        'CHAOST2_Superpix':{'data_dir': "/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized"},  # UPDATE THIS
         }
 
     # Update dataset config paths too
-    DATASET_CONFIG = {'SABS':{'img_bname': f'/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz',  # UPDATE
-                        'out_dir': '/Users/suyash/Desktop/cowpro/data/SABS/sabs_CT_normalized',  # UPDATE
+    DATASET_CONFIG = {'SABS':{'img_bname':  f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz', 
+                        'out_dir': '/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/',  # UPDATE
                         'fg_thresh': 1e-4,
                         },
                       'CHAOST2':{
-                       'img_bname': f'/path/to/your/CHAOS/data/image_*.nii.gz',  # UPDATE
-                          'out_dir': '/path/to/your/CHAOS/data',  # UPDATE
+                       'img_bname': f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized/image_*.nii.gz',  
+                          'out_dir': '/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized',  # UPDATE
                           'fg_thresh': 1e-4 + 50,
                         },
                      }
 
-
 @ex.config_hook
 def add_observer(config, command_name, logger):
-    """A hook fucntion to add observer"""
+    """A hook fucntion  to add observer"""
     exp_name = f'{ex.path}_{config["exp_str"]}'
     observer = FileStorageObserver.create(os.path.join(config['path']['log_dir'], exp_name))
     ex.observers.append(observer)
