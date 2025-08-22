@@ -46,7 +46,7 @@ do
         mkdir $LOGDIR
     fi
 
-    RELOAD_PATH='/scratch/suyash.kumar.mec22.itbhu/cowpro/exps/mySSL__CHAOST2_Superpix_sets_1_1shot_fold_4/2/snapshots/20000.pth' # path to the reloaded model
+    RELOAD_PATH='/scratch/suyash.kumar.mec22.itbhu/cowpro/exps/mySSL__CHAOST2_Superpix_sets_1_1shot_fold_4/2/snapshots/100000.pth' # path to the reloaded model
 
     python3 validation.py with \
     'modelname=dlfcn_res101' \
