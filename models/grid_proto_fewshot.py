@@ -11,8 +11,6 @@ from .alpmodule import MultiProtoAsConv
 from .alpmodule2 import MultiProtoAsWCos
 from .contrastive import ContrastiveLoss
 from .backbone.torchvision_backbones import TVDeeplabRes101Encoder, Encoder
-# DEBUG
-from util.utils import get_tversky_loss
 from pdb import set_trace
 
 import pickle
@@ -44,7 +42,9 @@ class FewShotSeg(nn.Module):
         self.get_cls()
         # Use two-level contrastive loss for better organ clustering with symmetric negative pairs
         self.contrastive_loss = ContrastiveLoss(
-            temperature=self.temperature
+            temperature=self.temperature,
+            use_projector=True,
+            feature_dim=256  # After localconv dimension
         )
 
     def get_encoder(self, in_channels):
@@ -241,12 +241,12 @@ class FewShotSeg(nn.Module):
             
             # Calculate TRUE self-supervised contrastive loss WITHOUT organ class information
             contrastive_loss = self.contrastive_loss(
-            supp_fts_teacher_flat,  # (B, C, H, W)
-            supp_fts_student_flat,  # (B, C, H, W)
-            binary_fg_msk_teacher_flat,  # (B, H, W) - binary mask (0 or 1)
-            binary_fg_msk_student_flat   # (B, H, W) - binary mask (0 or 1)
-      # NO ORGAN CLASS IDs - this is now true SSL
-  )
+                supp_fts_teacher_flat,  # (B, C, H, W)
+                supp_fts_student_flat,  # (B, C, H, W)
+                binary_fg_msk_teacher_flat,  # (B, H, W) - binary mask (0 or 1)
+                binary_fg_msk_student_flat,   # (B, H, W) - binary mask (0 or 1)
+                training=self.training  # Use projector only during training
+            )
             
             
 
@@ -761,3 +761,4 @@ class FewShotSeg(nn.Module):
 #                 #loss.append( get_tversky_loss(supp_pred.argmax(dim = 1, keepdim = True), supp_label[None, ...], 0.3, 0.7 ,1.0) / n_shots / n_ways)
 
 #         return torch.sum( torch.stack(loss))
+

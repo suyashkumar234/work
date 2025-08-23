@@ -44,17 +44,32 @@ os.environ['TORCH_HOME'] = "./pretrained_model" # sets an environment variable t
 @ex.automain # decorator
 def main(_run, _config, _log): # code according to sacred xperimental framework setup _run: Sacred's run object that tracks the experiment
 # _config: Contains all configuration parameters
+# _log: Sacred's logger object
     if _run.observers:
         os.makedirs(f'{_run.observers[0].dir}/snapshots', exist_ok=True)
         os.makedirs(f'{_run.observers[0].dir}/trainsnaps', exist_ok=True)
         for source_file, _ in _run.experiment_info['sources']:
-            os.makedirs(os.path.dirname(f"{_run.observers[0].dir}/source/{source_file}"), exist_ok=True)
+            os.makedirs(os.path.dirname(f'{_run.observers[0].dir}/source/{source_file}'),
+                        exist_ok=True)# exist_ok=True: Won't crash if directories already exist
             _run.observers[0].save_file(source_file, f'source/{source_file}')
-        shutil.rmtree(f'{_run.observers[0].basedir}/_sources', ignore_errors=True)
+        shutil.rmtree(f'{_run.observers[0].basedir}/_sources')
+
     set_seed(_config['seed']) # setting up random seed 
-    cudnn.enabled = True
-    cudnn.benchmark = True
-    torch.cuda.set_device(device=_config['gpu_id'])
+    
+    # Device setup for MPS compatibility
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+        print("Using MPS (Metal Performance Shaders) device")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        torch.cuda.set_device(device=_config['gpu_id'])
+        cudnn.enabled = True
+        cudnn.benchmark = True
+        print(f"Using CUDA device: {_config['gpu_id']}")
+    else:
+        device = torch.device("cpu")
+        print("Using CPU device")
+    
     torch.set_num_threads(1)
     
     # Modified device setup for M1 Mac compatibility
@@ -66,7 +81,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
     model = FewShotSeg(pretrained_path=None, cfg=_config['model']) # creating an instance of the model
 
     # Move model to appropriate device
-    model = model.cuda()
+    model = model.to(device)
     model.train()
 
     _log.info('###### Load data ######')
@@ -122,7 +137,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
         batch_size=_config['batch_size'],
         shuffle=True,
         num_workers=_config['num_workers'],
-        #pin_memory=True if device.type == 'cuda' else False,  # Only pin memory for CUDA
+        pin_memory=True if device.type == 'cuda' else False,  # Only pin memory for CUDA
         drop_last=True
     )
     
@@ -209,17 +224,17 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             i_iter += 1
             
             # Handle SuperpixelDataset format
-            support_images = [[shot.float().cuda() for shot in way] 
+            support_images = [[shot.float().to(device) for shot in way] 
                               for way in sample_batched['support_images']] 
-            support_fg_mask = [[shot['fg_mask'].float().cuda() for shot in way] 
+            support_fg_mask = [[shot['fg_mask'].float().to(device) for shot in way] 
                                for way in sample_batched['support_mask']] 
-            support_bg_mask = [[shot['bg_mask'].float().cuda() for shot in way]
+            support_bg_mask = [[shot['bg_mask'].float().to(device) for shot in way]
                                for way in sample_batched['support_mask']] 
 
-            query_images = [query_image.float().cuda()
+            query_images = [query_image.float().to(device)
                             for query_image in sample_batched['query_images']]
             query_labels = torch.cat(
-                [query_label.long().cuda() for query_label in sample_batched['query_labels']], dim=0)
+                [query_label.long().to(device) for query_label in sample_batched['query_labels']], dim=0)
 
             optimizer.zero_grad()
             # update the student encoder with the teacher encoder using momentum
@@ -239,7 +254,7 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
             query_loss = criterion(query_pred, query_labels) #+ get_tversky_loss(query_pred.argmax(dim = 1, keepdim = True), query_labels[None, ...], 0.3, 0.7 ,1.0)
             query_weight=1.0
             align_weight=1.0
-            contrastive_weight=1.0
+            contrastive_weight=0.05
             # print(f'Query_weight-{query_weight}')
             # print(f'Align_weight-{align_weight}')
             # print(f'Contrastive_weight-{contrastive_weight}')
@@ -800,3 +815,4 @@ def main(_run, _config, _log): # code according to sacred xperimental framework 
 #             if (i_iter - 2) > _config['n_steps']:
 #                 return 1 # finish up
             
+
