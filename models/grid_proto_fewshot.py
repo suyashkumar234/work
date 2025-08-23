@@ -1,4 +1,3 @@
-# Self Supervised
 """
 ALPNet
 """
@@ -45,7 +44,9 @@ class FewShotSeg(nn.Module):
         self.get_cls()
         # Use two-level contrastive loss for better organ clustering with symmetric negative pairs
         self.contrastive_loss = ContrastiveLoss(
-            temperature=self.temperature
+            temperature=self.temperature,
+            use_projector=True,
+            feature_dim=256  # After localconv dimension
         )
         
         # SSL Attention Modules for online-target feature interaction
@@ -270,24 +271,14 @@ class FewShotSeg(nn.Module):
             
             # Apply attention before contrastive loss (if enabled)
             if self.use_ssl_attention:
-                
+                # Use SSL attention (self + cross attention)
                 enhanced_supp_fts_teacher, enhanced_supp_fts_student, attention_weights = self.ssl_attention(
                     supp_fts_teacher_flat,  # online features (teacher, gradient-updated)
                     supp_fts_student_flat   # target features (student, momentum-updated)
                 )
-                #print("🔍 Using SSL Attention (self + cross attention)")
-
-                if attention_weights is not None:
-                    print(f"✅ Attention weights available: {len(attention_weights)} layers")
-                    for layer_name, weights in attention_weights.items():
-                        print(f"  📊 {layer_name}: {weights.shape}")
-                        # Print attention statistics  
-                        print(f"    Min: {weights.min().item():.6f}, Max: {weights.max().item():.6f}, Mean: {weights.mean().item():.6f}")
-                else:
-                    print("❌ No attention weights returned!")
-
+                print("🔍 Using SSL Attention (self + cross attention)")
             elif self.use_mask_attention:
-                #Use mask-aware attention with foreground masks
+                # Use mask-aware attention with foreground masks
                 enhanced_supp_fts_teacher, enhanced_supp_fts_student, attention_weights = self.mask_attention(
                     supp_fts_teacher_flat,  # online features (teacher, gradient-updated)  
                     supp_fts_student_flat,  # target features (student, momentum-updated)
@@ -295,20 +286,12 @@ class FewShotSeg(nn.Module):
                     binary_fg_msk_student_flat   # student foreground mask
                 )
                 print("🎯 Using Mask Attention (foreground-focused)")
-                if attention_weights is not None:
-                    #print(f"✅ Attention weights available: {len(attention_weights)} layers")
-                    for layer_name, weights in attention_weights.items():
-                        print(f"  📊 {layer_name}: {weights.shape}")
-                        # Print attention statistics
-                        print(f"    Min: {weights.min().item():.6f}, Max: {weights.max().item():.6f}, Mean: {weights.mean().item():.6f}")
-                else:
-                       print("❌ No attention weights returned!")
             else:
                 # Use original features without attention
                 enhanced_supp_fts_teacher = supp_fts_teacher_flat
                 enhanced_supp_fts_student = supp_fts_student_flat
                 attention_weights = None
-                #print("⚪ Using Simple Model (no attention)")
+                print("⚪ Using Simple Model (no attention)")
             
             # Calculate TRUE self-supervised contrastive loss WITHOUT organ class information
             # Use attention-enhanced features for contrastive learning
@@ -316,7 +299,8 @@ class FewShotSeg(nn.Module):
                 enhanced_supp_fts_teacher,  # (B, C, H, W) - attention-enhanced teacher features
                 enhanced_supp_fts_student,  # (B, C, H, W) - attention-enhanced student features
                 binary_fg_msk_teacher_flat,  # (B, H, W) - binary mask (0 or 1)
-                binary_fg_msk_student_flat   # (B, H, W) - binary mask (0 or 1)
+                binary_fg_msk_student_flat,  # (B, H, W) - binary mask (0 or 1)
+                training=self.training  # Use projector only during training
                 # NO ORGAN CLASS IDs - this is now true SSL with attention
             )
             
@@ -840,3 +824,4 @@ class FewShotSeg(nn.Module):
 #                 #loss.append( get_tversky_loss(supp_pred.argmax(dim = 1, keepdim = True), supp_label[None, ...], 0.3, 0.7 ,1.0) / n_shots / n_ways)
 
 #         return torch.sum( torch.stack(loss))
+

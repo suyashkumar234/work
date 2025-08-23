@@ -2,6 +2,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class ContrastiveProjector(nn.Module):
+    
+    def __init__(self, in_channels=256, hidden_channels=512, out_channels=128):
+        super(ContrastiveProjector, self).__init__()
+        self.projector = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_channels, 1, bias=False),
+            nn.BatchNorm2d(hidden_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_channels, out_channels, 1, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+        
+    def forward(self, x):
+        return self.projector(x)
+
 class SupervisedPixelWiseContrastiveLoss(nn.Module):
       """
       Self-Supervised pixel-wise InfoNCE contrastive loss for online-target learning.
@@ -142,16 +157,33 @@ class ContrastiveLoss(nn.Module):
       """
       Main contrastive loss - now self-supervised without organ classes
       """
-      def __init__(self, temperature=0.5):
+      def __init__(self, temperature=0.5, use_projector=True, feature_dim=256):
           super(ContrastiveLoss, self).__init__()
           self.temperature = temperature
+          self.use_projector = use_projector
           self.supervised_loss = SupervisedPixelWiseContrastiveLoss(temperature=temperature)
+          
+          if self.use_projector:
+              self.projector = ContrastiveProjector(in_channels=feature_dim)
 
-      def forward(self, feature_online, feature_target, mask_online, mask_target):
+      def forward(self, feature_online, feature_target, mask_online, mask_target, training=True):
           """
           Self-supervised contrastive loss without organ classes
+          Args:
+              feature_online: Teacher features
+              feature_target: Student features  
+              mask_online: Teacher masks
+              mask_target: Student masks
+              training: Whether in training mode (use projector) or validation (skip projector)
           """
-          return self.supervised_loss(feature_online, feature_target, mask_online, mask_target)
+          # Apply projector only during training
+          if self.use_projector and training:
+              feature_online_proj = self.projector(feature_online)
+              feature_target_proj = self.projector(feature_target)
+              return self.supervised_loss(feature_online_proj, feature_target_proj, mask_online, mask_target)
+          else:
+              # During validation, use raw features
+              return self.supervised_loss(feature_online, feature_target, mask_online, mask_target)
 
 
 
