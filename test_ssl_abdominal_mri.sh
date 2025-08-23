@@ -7,7 +7,7 @@ export CUDA_VISIBLE_DEVICES=$GPUID1
 PROTO_GRID=8 # using 32 / 8 = 4, 4-by-4 prototype pooling window during training
 CPT="myexp"
 DATASET='CHAOST2_Superpix'
-NWORKER=4
+NWORKER=8
 
 ALL_EV=( 4) # 5-fold cross validation (0, 1, 2, 3, 4)
 ALL_SCALE=( "MIDDLE") # config of pseudolabels
@@ -46,7 +46,7 @@ do
         mkdir $LOGDIR
     fi
 
-    RELOAD_PATH='/scratch/suyash.kumar.mec22.itbhu/cowpro/exps/mySSL__sets_0_1shot_fold_4/1/snapshots/100000.pth' # path to the reloaded model
+    RELOAD_PATH='/scratch/suyash.kumar.mec22.itbhu/cowpro/exps/mySSL__sets_projector_0_1shot_fold_4/2/snapshots/100000.pth' # path to the reloaded model
 
     python3 validation.py with \
     'modelname=dlfcn_res101' \

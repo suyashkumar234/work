@@ -34,17 +34,16 @@ def cfg():
     """Default configurations - M1 Mac optimized"""
     seed = 1234
     gpu_id = 0  # Will be ignored on M1 Mac, kept for compatibility
-    mode = 'train'  # Changed to test mode for validation
-    dataset = 'CHAOST2_Superpix'
+    mode = 'train'
+    dataset = 'Sabs_Superpix'
     use_coco_init = True
     # Optimized for M1 Mac
-    num_workers = 8 # M1 has good CPU cores, but don't oversubscribe
+    num_workers = 0 # M1 has good CPU cores, but don't oversubscribe
 
     ### Training - adjusted for M1 Mac memory constraints
     n_steps = 100100  # Reduced from 100100 for faster testing
     batch_size = 1   # Keep at 1 for memory efficiency
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
-    #lr_milestones = [50000, 100000, 150000, 200000, 250000]
     lr_step_gamma = 0.95
     ignore_label = 255
     print_interval = 20000  # More frequent updates for shorter runs
@@ -53,11 +52,9 @@ def cfg():
     scan_per_load = -1 # Load entire dataset if memory allows
     which_aug = 'sabs_aug'
     input_size = (256, 256)  # Keep reasonable size for M1
-    min_fg_data='1'  # Changed for validation
-    label_sets = 1
-    exclude_cls_list = [1,6]
-    #label_set=0
-    #exclude_cls_list = [2,3]
+    min_fg_data='100'
+    label_sets = 0
+    exclude_cls_list = [2, 3]
     usealign = True
     use_wce = True
     viz = 1
@@ -76,7 +73,7 @@ def cfg():
     modelname = 'dlfcn_res101'  # This should work fine on M1
     clsname = 'grid_proto'
     resume = False
-    reload_model_path = './exps/myexp_MIDDLE_0/mySSL_train_SABS_Superpix_lbgroup0_scale_MIDDLE_vfold0_SABS_Superpix_sets_0_1shot/16/snapshots/100000.pth'
+    reload_model_path = './exps/your_model_path.pth'  # Update this path
     proto_grid_size = 8
     feature_hw = [32, 32]
 
@@ -119,7 +116,7 @@ def cfg():
 
     exp_str = '_'.join([
         exp_prefix,
-        f'sets_{label_sets}',
+        f'sets_projector_{label_sets}',
         f'{task["n_shots"]}shot',
         f'fold_{eval_fold}'  # Add fold information
                 ])
@@ -136,12 +133,12 @@ def cfg():
         }
 
     # Update dataset config paths too
-    DATASET_CONFIG = {'SABS':{'img_bname':  f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz',  # UPDATE
+    DATASET_CONFIG = {'SABS':{'img_bname':  f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/image_*.nii.gz',  
                         'out_dir': '/scratch/suyash.kumar.mec22.itbhu/cowpro/data/SABS/sabs_CT_normalized/',  # UPDATE
                         'fg_thresh': 1e-4,
                         },
                       'CHAOST2':{
-                       'img_bname': f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized/image_*.nii.gz',  # UPDATE
+                       'img_bname': f'/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized/image_*.nii.gz', 
                           'out_dir': '/scratch/suyash.kumar.mec22.itbhu/cowpro/data/CHAOST2/chaos_MR_T2_normalized',  # UPDATE
                           'fg_thresh': 1e-4 + 50,
                         },
