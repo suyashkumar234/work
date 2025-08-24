@@ -46,8 +46,8 @@ def cfg():
     lr_milestones = [ (ii + 1) * 1000 for ii in range(n_steps // 1000 - 1)]
     lr_step_gamma = 0.95
     ignore_label = 255
-    print_interval = 5000  # More frequent updates for shorter runs
-    save_snapshot_every = 20000  # More frequent saves
+    print_interval = 20000  # More frequent updates for shorter runs
+    save_snapshot_every = 25000  # More frequent saves
     max_iters_per_load = 1000  # Reduced for M1 Mac
     scan_per_load = -1 # Load entire dataset if memory allows
     which_aug = 'sabs_aug'
@@ -133,7 +133,7 @@ def cfg():
 
     exp_str = '_'.join([
         exp_prefix,
-        f'mask_attn_sets_{label_sets}',
+        f'mask_projector_attn_sets_{label_sets}',
         f'{task["n_shots"]}shot',
         f'fold_{eval_fold}'  # Add fold information
                 ])
